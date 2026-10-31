@@ -34,7 +34,7 @@ const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
 // auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
-const AUTO_CHECK_VERSION = 1
+const AUTO_CHECK_VERSION = 2
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -52,7 +52,7 @@ const NOT_A_QUESTION = 'Not a question'
 // prefer · suggest 는 다른 사람의 취향을 말할 때도 쓰므로 영어는 직접 권하는 형태만 받는다.
 const RECOMMENDATION_WORDS = /\b(i|we)(['’]d| would| strongly| also)* (recommend|suggest|prefer)\b|\brecommended\b|\brecommendation\b|^\W*(recommend|suggest)\b|권장|추천|권합/i
 // 권장 표현과 같은 문장에 있으면 부정 · 비교 · 조건일 수 있어 auto 가 답하지 않는다.
-const NEGATION_WORDS = /\b(not|no|never|cannot|avoid|against|over|instead|rather|if|unless)\b|n['’]t\b|않|말아|말고|말라|마세요|못|안 |비권장|비추천|대신|보다|면\s/i
+const NEGATION_WORDS = /\b(not|no|never|cannot|avoid|against|over|instead|rather|if|unless)\b|n['’]t\b|않|말아|말고|말라|마세요|못|안\s*[해하되돼됨됩된]|안 |비권장|비추천|대신|보다|면\s/i
 const QUESTION_MARKS = /[?？]/
 const MIN_AUTO_LABEL_LENGTH = 2
 const NOT_STATED_NOTE = 'Auto mode leaves this open: the response states no recommendation.'
@@ -357,8 +357,10 @@ const toRecommended = (value: unknown, options: QuestionOption[], isMultiSelect:
 const quoteOf = (value: unknown) => String(value ?? '').trim()
 
 const LIST_MARKER = '(?:[-*+]|\\d+[.)])\\s+'
-const OPENING_FENCE = new RegExp(`^\\s*(?:${LIST_MARKER}|>\\s*)*(\`{3,}|~{3,})`)
-const CLOSING_FENCE = /^[\s>]*(`{3,}|~{3,})\s*$/
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/
+const CLOSING_FENCE = /^ {0,3}(`{3,}|~{3,})\s*$/
+// 들여쓰기 · 목록 · 인용 안의 fence 와 info string 에 backtick 이 든 줄은 코드 블록의 범위를 줄 단위로 정할 수 없다.
+const UNCLEAR_FENCE = new RegExp(`^(?: {4,}|\\t| {0,3}(?:>|${LIST_MARKER})).*(?:\`{3,}|~{3,})|^ {0,3}\`{3,}[^\`\\n]*\`.*$`, 'm')
 const QUOTE_LINE = new RegExp(`^\\s*(?:${LIST_MARKER})*>`)
 const INDENTED_LINE = /^( {4}|\t)/
 const RELAYING_HTML = /<(?:!--|(?:pre|blockquote|script)\b)/i
@@ -368,10 +370,10 @@ const closesFence = (line: string, fence: string) => {
   return closing != undefined && closing[0] == fence[0] && closing.length >= fence.length
 }
 
-// 응답이 옮겨 적은 글은 응답 자신의 말이 아니므로 대조 대상에서 뺀다. 구조가 애매한 줄은 코드로 본다.
+// 응답이 옮겨 적은 글은 응답 자신의 말이 아니므로 대조 대상에서 뺀다. 구조가 애매하면 전부 뺀다.
 // 잘못 빼면 사람이 한 번 더 답하면 되고, 잘못 남기면 사람 없이 답이 나간다.
 const ownProse = (text: string) => {
-  if (RELAYING_HTML.test(text)) return ''
+  if (RELAYING_HTML.test(text) || UNCLEAR_FENCE.test(text)) return ''
 
   const kept: string[] = []
   let fence = ''
@@ -380,17 +382,18 @@ const ownProse = (text: string) => {
       if (closesFence(line, fence)) fence = ''
       continue
     }
-    const opening = line.match(OPENING_FENCE)?.[1]
+    const opening = line.match(FENCE_LINE)?.[1]
     if (opening != undefined) fence = opening
     else if (!QUOTE_LINE.test(line) && !INDENTED_LINE.test(line)) kept.push(line)
   }
   return kept.join('\n')
 }
 
+// 줄바꿈 하나는 문장을 끝내지 않는다. 빈 줄과 문장 부호에서만 나눈다.
 const toSentences = (text: string) =>
   text
-    .split(/(?<=[.!?。！？])\s+|\n+/)
-    .map(sentence => sentence.trim())
+    .split(/(?<=[.!?。！？])\s+|\n\s*\n/)
+    .map(sentence => sentence.replace(/\s*\n\s*/g, ' ').trim())
     .filter(sentence => sentence != '')
 
 // 한국어 조사가 라벨에 바로 붙으므로 영문자 · 숫자만 낱말로 본다. `main` 은 `main.py` 에 맞지 않는다.
@@ -406,11 +409,10 @@ const isRecommending = (sentence: string, recommended: string[], others: string[
   recommended.every(label => [...label].length >= MIN_AUTO_LABEL_LENGTH && hasLabel(sentence, label)) &&
   !others.some(label => hasLabel(sentence, label))
 
-// 두 문장 사이에 다른 질문이 있으면 이 권장이 어느 질문의 것인지 정할 수 없다.
-const isSameQuestion = (sentences: string[], first: number, second: number) =>
-  !sentences
-    .slice(Math.min(first, second) + 1, Math.max(first, second))
-    .some(sentence => QUESTION_MARKS.test(sentence))
+// 권장은 바로 앞의 질문에만 묶는다. 앞뒤 어느 쪽이든 받으면 한 문장이 두 질문의 권장이 된다.
+const followsQuestion = (sentences: string[], asked: number, recommendation: number) =>
+  asked < recommendation &&
+  !sentences.slice(asked + 1, recommendation).some(sentence => QUESTION_MARKS.test(sentence))
 
 // 추출 모델의 출력은 응답 밖의 글에 속았을 수 있고 인용은 모델이 고른 조각이다. 인용으로 응답의 문장을
 // 찾아 그 문장 전체를 판정하고, auto 로 보낼 질문 문장을 돌려준다. 통과하지 못하면 undefined 다.
@@ -435,7 +437,7 @@ const findStatedQuestion = (
   const isStated = sentences.every(
     (sentence, at) =>
       !sentence.includes(quote) ||
-      (isRecommending(sentence, recommended, others) && isSameQuestion(sentences, askedAt, at)),
+      (isRecommending(sentence, recommended, others) && followsQuestion(sentences, askedAt, at)),
   )
   return isStated ? question : undefined
 }

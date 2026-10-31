@@ -72,8 +72,8 @@ History marks each closed question:
 
 Auto mode answers without showing you the question, so it has these limits:
 
-- It answers only when the response itself recommends an answer. The extraction model must quote the question and the recommendation, and the plugin uses each quote only to find a whole sentence in the response. Blockquotes, code blocks and HTML blocks are left out, because those usually relay text from elsewhere, and any structure the plugin cannot tell apart counts as a code block.
-- The question sentence must appear once and contain a question mark, and no other question may stand between it and the recommendation sentence.
+- It answers only when the response itself recommends an answer. The extraction model must quote the question and the recommendation, and the plugin uses each quote only to find a whole sentence in the response. Blockquotes, code blocks and HTML blocks are left out, because those usually relay text from elsewhere, and a response with fence structure the plugin cannot tell apart counts as having no recommendation.
+- The question sentence must appear once and contain a question mark. The recommendation sentence must come after it, with no other question between them.
 - The recommendation sentence must contain the chosen label as a whole word (at least 2 characters) and a direct recommendation (`I recommend`, `we suggest`, `I prefer`, `recommended`, `recommendation`, `권장`, `추천` or `권합`). It must not contain another option's label, a question mark, or a negation, comparison or condition word such as `not`, `over`, `if`, `않` or `비추천`.
 - Any other question stays open, with a note in the pane. That includes every recommendation written in another language and sentences that name both options, such as "A 와 B 중 A 를 권장합니다".
 - Verdicts saved under an earlier version of these checks are not trusted: those questions return to you.

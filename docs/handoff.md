@@ -117,9 +117,10 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 | 도구 출력 주입 | 닫는 태그와 지시를 출력하는 스크립트를 커밋 `dab5049` 에서 실행했을 때 haiku 는 항목을 만들지 않았다(1회) |
 | auto 답의 제출 형식 | `The pending-questions plugin sent a message:` 로 제출됐고, 모델이 이어서 작업했다(한국어 · 영어 권장 각 1건). 기록의 `origin` 은 `plugin` 이다. `isDelivered` 를 지운 뒤 `--resume` 해도 다시 제출하지 않았다 |
 | 모델이 부른 `AskUserQuestion` 과 auto | `(Recommended)` 표시가 있으면 dialog 없이 답했고, 표시가 없으면 dialog 가 열렸다 |
-| auto 판정 입력 범위 | `findStatedQuestion` · `upgradeItem` 을 `hooks/register.tsx` 에서 잘라 낸 스크립트로 54가지 입력을 실행해 모두 기대대로였다. 커밋 `a912670` 은 인용을 조각으로 고른 부정 문장(`recommend a.txt.` ← `I do not recommend a.txt.`), 다른 질문의 권장, 가짜 닫는 fence, 목록 안의 코드 블록 · 인용 블록, HTML 블록, `cannot`, `비추천`, 의문문, 조건문, 제3자의 취향을 통과시켰다 |
+| auto 판정 입력 범위 | `findStatedQuestion` · `upgradeItem` 을 `hooks/register.tsx` 에서 잘라 낸 스크립트로 62가지 입력을 실행해 모두 기대대로였다. 커밋 `de25ce9` 는 뒤 질문이 앞 문장의 권장을 가져가는 경우, 줄바꿈으로 나뉜 부정 문장, 여분의 `>` 가 붙은 닫는 fence, 들여쓴 여는 fence, info string 에 backtick 이 든 줄을 통과시켰다. 커밋 `a912670` 은 인용을 조각으로 고른 부정 문장(`recommend a.txt.` ← `I do not recommend a.txt.`), 다른 질문의 권장, 가짜 닫는 fence, 목록 안의 코드 블록 · 인용 블록, HTML 블록, `cannot`, `비추천`, 의문문, 조건문, 제3자의 취향을 통과시켰다 |
 | auto 판정 깨기 | 조건 12가지를 하나씩 뺀 사본(부정 · 물음표 · 다른 라벨 · 문장 전체 판정 · 질문 중복 · 질문 묶음 · `ownProse` · HTML · 들여쓴 코드 · fence 길이 · 판정 버전 · 직접 권장 형태)이 각각 해당 입력을 통과시켰다 |
 | 이전 판본의 파일 | `askedQuote` 가 없고 `isRecommendationStated` 가 true 인 열린 항목과 미전달 `auto` 항목을 넣고 auto 세션을 열었다. 커밋 `e15f36b` 는 `Question: undefined` 를 제출했고 메인 모델이 그 질문을 찾느라 셸 명령 2개를 실행했으며 열린 항목도 답했다. 현재 코드는 두 항목을 열어 두었고, 같은 턴의 새 질문은 `a.txt` 로 답했다 |
+| 두 질문이 든 응답의 실제 세션 | `Should I run the tests, yes or no? I recommend yes. Should I deploy now, yes or no?` 에서 앞 질문만 `yes` 로 답했고 뒤 질문은 열어 두었다. 추출 모델이 뒤 질문의 권장 인용을 비웠으므로 이 세션에서 `followsQuestion` 이 판정을 정한 것은 아니다. 그 조건은 입력 실행으로 확인했다. `autoCheckVersion` 1 로 저장된 열린 항목은 열린 채 남았다 |
 | 판정 조건을 바꾼 뒤의 실제 세션 | `a912670` 형식(`askedQuote` 있음, `autoCheckVersion` 없음)의 열린 항목과 미전달 `auto` 항목을 넣고 auto 세션을 열었다. 두 항목은 열린 채 남았다. 평문 권장 질문은 `a.txt` 로 답했다. 인용 블록으로 출력한 질문은 추출 모델이 권장을 인용했지만 열어 두었다. 제출은 평문 권장 1건뿐이었다 |
 | `/clear` | pane 이 비고, 이전 파일은 남고, 첫 턴 뒤 이전 세션이 목록에 나온다. 새 파일의 `cwd` 가 채워진다 |
 | `/clear` 뒤 생긴 세션의 열린 질문 | 새 세션의 목록에 나온다. 수정 전 코드의 파일은 `cwd` 가 빈 문자열이었다 |
@@ -129,7 +130,8 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 ## 8. 알려진 위험과 한계
 
 - auto 의 판정은 낱말과 문장의 위치를 대조할 뿐 뜻을 읽지 않고, 낱말 목록은 완전할 수 없다. 응답이 평문으로 옮겨 적은 글, `NEGATION_WORDS` 에 없는 부정 표현, 다른 사람의 권장(`the docs recommended a.txt`)이 나머지 조건을 만족하면 대조를 통과한다.
-- CommonMark 파서를 쓰지 않았다. 이 mod 는 의존성이 없는 파일 하나이므로 `ownProse` 가 줄 단위로 판정하고, 애매한 구조는 코드 블록으로 본다. 잘못 빼면 사람이 한 번 더 답하면 되기 때문이다.
+- CommonMark 파서를 쓰지 않았다. 이 mod 는 의존성이 없는 파일 하나이므로 `ownProse` 가 줄 단위로 판정하고, 줄 단위로 범위를 정할 수 없는 fence 가 있으면 응답 전체를 권장 없음으로 본다. 잘못 빼면 사람이 한 번 더 답하면 되기 때문이다.
+- 질문보다 앞에 적은 권장(`I recommend a.txt. Which file?`)은 auto 가 답하지 않는다. 앞뒤를 모두 받으면 한 문장이 두 질문의 권장이 된다.
 - 응답의 `new` 추출은 도구 출력을 함께 받는다. 추출을 두 번으로 나누면 응답마다 모델 호출이 하나 늘어나므로 나누지 않았고, `new` 는 응답 본문 대조로 막는다.
 - `RECOMMENDATION_WORDS` 는 영어 · 한국어 낱말 목록이다. 다른 언어의 권장은 auto 가 답하지 않고 열어 둔다.
 - 도구 출력이 추출 모델을 속이면 가짜 항목이 pane 에 등록되거나 열린 질문이 닫힐 수 있다. 닫기의 근거 대조(`isQuoted`)는 도구 출력도 근거로 인정한다.
