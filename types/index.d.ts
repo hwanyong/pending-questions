@@ -14,8 +14,10 @@ export type PendingQuestion = {
   // 권장 항목이 앞에 온다. 1개면 서술형 질문이고 그 1개가 권장 답변이다.
   options: QuestionOption[]
   recommended: string[]
-  // 응답이 직접 권장했으면 true. false 면 recommended 는 추출 모델이 고른 값이고 auto 가 보내지 않는다.
+  // 질문과 권장 항목을 응답 본문에서 대조했으면 true. false 면 auto 가 보내지 않는다.
   isRecommendationStated: boolean
+  // 응답에서 이 질문을 묻는 부분의 인용. auto 답을 보낼 때 question 대신 쓴다.
+  askedQuote: string
   isMultiSelect: boolean
   answeredBy: AnsweredBy
   answer: string

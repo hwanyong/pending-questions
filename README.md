@@ -21,7 +21,7 @@ staging
 - **Automatic registration.** A small model reads each response and registers the questions and decisions that need your answer.
 - **Three question kinds.** Single choice opens a dialog. Multiple choice shows checkable rows in the pane with the recommended options already checked. Free-form questions show an input with a recommended draft.
 - **Automatic closing.** A question closes as `[resolved]` when the conversation or a tool result settles it. The model must quote the evidence, and the plugin checks that quote against the conversation.
-- **Manual and auto modes.** Auto mode answers only the questions whose recommendation appears in the response. Everything else stays open for you. History shows how each question was handled.
+- **Manual and auto modes.** Auto mode answers only the questions whose recommendation it can verify in the response, and sends the answer as a plugin message, not as your words. Everything else stays open for you. History shows how each question was handled.
 - **Corrections.** `Not a question` closes a wrong entry, `Reopen` restores a wrongly closed one, and `Rescan last response` reads the last response again with a stronger model.
 - **Crash recovery.** Questions, unread responses and undelivered answers are written to disk first, so a restart continues where the session stopped.
 - **Other sessions.** The pane lists open questions in other sessions with the same working directory, with the `claude --resume` command for each.
@@ -70,9 +70,10 @@ History marks each closed question:
 
 ### Auto mode
 
-Auto mode answers without showing you the question, so it has three limits:
+Auto mode answers without showing you the question, so it has these limits:
 
-- It answers only when the response itself recommends an answer. The extraction model must quote that recommendation, and the plugin checks the quote against the response. A question without one stays open, with a note in the pane.
+- It answers only when the response itself recommends an answer. The extraction model must quote the question and the recommendation, and the plugin checks both quotes against the response. The recommendation quote must contain the chosen label and one of `recommend`, `suggest`, `prefer`, `권장`, `추천` or `권합`. Any other question stays open, with a note in the pane, including every recommendation written in another language.
+- The text it sends uses the verified quote, not the question the model wrote. Claude reads it framed as `The pending-questions plugin sent a message:`, not as something you said. Answers you give yourself are sent as your words.
 - A question Claude asks through the `AskUserQuestion` tool is answered only when every question in the call has an option marked `(Recommended)`. Otherwise the dialog opens.
 - After 5 automatic answers in a row it pauses until you type a prompt or answer a question.
 
@@ -80,7 +81,7 @@ Auto mode answers without showing you the question, so it has three limits:
 
 1. When a turn ends, the response is written to a file as unread.
 2. The `haiku` model extracts new questions and resolved ones. `Rescan last response` uses the `sonnet` model.
-3. Your answer is written to the file, then submitted to the session as a prompt. On restart, undelivered answers are compared with the conversation record so none is sent twice.
+3. The answer is written to the file, then submitted to the session as a prompt. On restart, undelivered answers are compared with the conversation record so none is sent twice.
 
 Each session writes to two files in turn, `<sessionId>.0.json` and `<sessionId>.1.json`, in `~/.claude/pending-questions/`. A write interrupted halfway leaves the previous version intact. After each write, `hooks/flush.pl` asks the operating system to commit the file and its folder to disk (`F_FULLFSYNC` on macOS, `fsync` elsewhere). If that fails, the plugin shows a toast and keeps the written file.
 
@@ -92,7 +93,8 @@ Each session writes to two files in turn, `<sessionId>.0.json` and `<sessionId>.
 ## Limitations
 
 - Extraction is done by a model, so it can miss a question, register something that is not one, or close one wrongly. The corrections above undo these; they do not prevent them.
-- Auto mode trusts the quoted sentence. A sentence in the response that the model wrongly cites as a recommendation passes the check.
+- Auto mode trusts the quoted sentence. A sentence in the response that contains the label and a recommendation word but recommends something else passes the check.
+- The extraction input includes the turn's tool output, because a tool result can settle a question. The input is marked as data with randomized tags, but a file or web page that Claude read could still mislead the extraction model into registering or closing a question wrongly. Auto mode does not send such a question unless both quotes pass the check above; check the pane for entries you do not recognize.
 - Recovery was tested with `kill -9`. A real power loss or reboot has not been tested. Whether data survives also depends on the drive honoring the flush.
 - Tested on macOS with Claude Code 2.1.312 in a terminal. Not tested: Linux, Windows, mobile (where free-form questions fall back to a dialog with `Decide later`), the desktop app and `claude --bg`.
 - `hooks/flush.pl` needs `perl` on the `PATH`. Without it, every write shows a toast and the files are still written.
