@@ -21,6 +21,8 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 
 `--debug-file` 로그를 `--plugin-dir` 폴더 안에 두지 않는다. `--debug-file` 은 로그 옆에 심볼릭 링크 `latest` 를 만들고, 그 폴더가 SMB 위에 있으면 `/questions` 의 `command.run` 이 호출되지 않는다(§8).
 
+공개본을 고치면 `.claude-plugin/plugin.json` 의 `version` 을 올린다. 커밋만 늘리면 설치본에 적용되지 않는다. 임시 `CLAUDE_CONFIG_DIR` 에서 설치 기록을 이전 커밋으로 바꾸고 파일을 고친 뒤 `claude plugin update` 를 실행하자 `already at the latest version (0.1.0)` 이 나왔고 파일과 기록이 그대로였다.
+
 ## 3. 폴더
 
 | 경로 | 내용 |
