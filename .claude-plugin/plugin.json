@@ -1,6 +1,6 @@
 {
   "name": "pending-questions",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Registers questions waiting for your answer in a pane, answers them in the pane or automatically, and recovers them after a crash",
   "author": { "name": "hwanyong" },
   "license": "MIT",

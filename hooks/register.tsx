@@ -34,7 +34,7 @@ const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
 // auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
-const AUTO_CHECK_VERSION = 3
+const AUTO_CHECK_VERSION = 4
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -390,10 +390,11 @@ const ownProse = (text: string) => {
   return kept.join('\n')
 }
 
-// 줄바꿈 하나는 문장을 끝내지 않는다. 빈 줄과 문장 부호(뒤에 붙은 강조 표시 포함)에서만 나눈다.
+// 줄바꿈 하나는 문장을 끝내지 않는다. 빈 줄과 문장 부호에서 나누고, 강조 표시가 닫힌 뒤에는 줄바꿈에서만 나눈다.
+// 인용 부호 · 괄호 · 백틱 뒤에서는 나누지 않는다. 나누면 뒤따르는 부정어가 권장 문장에서 빠진다.
 const toSentences = (text: string) =>
   text
-    .split(/(?<=[.!?。！？][*_`"')\]]*)\s+|\n\s*\n/)
+    .split(/(?<=[.!?。！？])\s+|(?<=[.!?。！？](?:\*{1,2}|_{1,2}))[ \t]*\n\s*|\n\s*\n/)
     .map(sentence => sentence.replace(/\s*\n\s*/g, ' ').trim())
     .filter(sentence => sentence != '')
 
