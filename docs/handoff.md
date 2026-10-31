@@ -23,6 +23,18 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 
 공개본을 고치면 `.claude-plugin/plugin.json` 의 `version` 을 올린다. 커밋만 늘리면 설치본에 적용되지 않는다. 임시 `CLAUDE_CONFIG_DIR` 에서 설치 기록을 이전 커밋으로 바꾸고 파일을 고친 뒤 `claude plugin update` 를 실행하자 `already at the latest version (0.1.0)` 이 나왔고 파일과 기록이 그대로였다.
 
+README 이미지를 다시 녹화하는 절차는 다음과 같다. Python 환경에 `pillow` · `fonttools` 가 있어야 하고, 글꼴은 macOS 의 Menlo 를 쓴다. 장면 이름을 빼면 일곱 장면(`overview` · `kinds` · `auto` · `pause` · `corrections` · `recovery` · `other`)을 전부 녹화한다.
+
+```
+DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/demo/record.py [장면 ...]
+```
+
+- `record.py` 는 `DEMO_ROOT/home` 을 `HOME` 으로 쓰고, tmux 소켓 `pq-demo` 의 120x36 창에서 `claude --plugin-dir <저장소> --model haiku` 를 실행한다. 응답은 `--append-system-prompt-file` 로 고정한다. 로그인은 키체인 폴더 링크로 재사용하므로 계정 사용량을 쓴다.
+- 녹화 중에 저장소 파일을 고치지 않는다. 2026-10-31 에 `plugin.json` · `README.md` · `record.py` 를 고친 시각마다 세션에 `plugin.json changed — reloaded` 줄이 찍혔고, 한 번은 고정한 응답 대신 `Noted.` 가 나와 `overview` 장면이 시간 초과로 멈췄다. `plugin.json` 이 아닌 파일을 고쳤을 때도 이 줄이 나온 원인은 밝히지 못했다. 설치본이 아니라 `--plugin-dir` 에서 나는 동작이다.
+- `render.py` 의 `MASKS` 는 요금제 · 사용량 경고 · Tip · 홍보 문구를 지우고, `FORBIDDEN` 은 지운 뒤에도 남은 문구를 찾는다. `FORBIDDEN` 에 걸리거나 시간이 초과된 장면은 이미지를 쓰지 않고 최대 4회 다시 녹화한다. 재로드 줄 · `Tip:` · 홍보 문구가 든 줄을 넣어 `forbidden_text` 가 그 문구를 반환하는 것을 출력으로 확인했다. 다른 경로(OCR)로 대조하지 않았으므로 녹화 뒤 프레임을 읽어 다시 확인한다.
+- `auto` 장면은 추출 모델이 라벨을 `Blue-green` 으로 적으면 `hasLabel` 이 대소문자를 구분해 `[auto] q1` 에서 멈춘다. 2026-10-31 의 마지막 5회 중 2회였다(§8).
+- 2026-10-31 측정: `docs/images/` 전체 약 4.3 MB, APNG 7개(각 0.2 ~ 0.7 MB). `social-preview.png` 는 사람이 GitHub Settings 의 Social preview 에 올린다.
+
 ## 3. 폴더
 
 | 경로 | 내용 |
@@ -37,6 +49,8 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 | `verification/pqstate.py <sessionId>` | 저장 파일의 최신 슬롯을 출력한다 |
 | `verification/pqseed.py <sessionId> "<d 를 고치는 Python 식>"` | 비정상 종료 상태의 저장 파일을 만든다 |
 | `verification/count_questions.py` · `count_questions2.py` | 지난 세션 기록에서 질문 표현을 센 스크립트. 정규식 어림이다 |
+| `verification/demo/record.py` · `render.py` | README 의 APNG · 스크린샷을 실제 세션에서 녹화해 `docs/images/` 에 쓴다 |
+| `docs/images/` | README 이미지. 마켓플레이스 `source` 가 `./` 라서 설치본에 함께 들어간다 |
 | `verification/logs/` | 시험의 디버그 로그. 세션 id 와 MCP 서버 목록이 들어 있어 `.gitignore` 로 제외했다 |
 
 런타임 데이터는 `${CLAUDE_CONFIG_DIR ?? $HOME/.claude}/pending-questions/<sessionId>.<0|1>.json` 이다.
@@ -151,6 +165,8 @@ Claude Code 가 사용자에게 한 질문이 다른 대화에 묻혀 스크롤�
 | SMB(복사본 · 프로젝트) | 없음 | 있음 | 정상 |
 | SMB(복사본) | 없음 | 없음 | 정상 |
 | `/tmp`(현재 코드 · 이전 코드) | 있음 | 있음 · 없음 | 정상 |
+
+- auto 모드의 라벨 비교는 대소문자를 구분한다. 추출 모델이 `Blue-green` 을 내고 응답에 `blue-green` 이 있으면 권장이 있어도 `the response states no recommendation` 으로 남는다. 안전한 쪽으로 틀리지만 안내문이 사실과 다르다. 고치지 않았다.
 
 ## 9. 시험하지 않은 것
 
