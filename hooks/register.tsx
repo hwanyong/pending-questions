@@ -34,7 +34,7 @@ const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
 // auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
-const AUTO_CHECK_VERSION = 2
+const AUTO_CHECK_VERSION = 3
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -357,10 +357,11 @@ const toRecommended = (value: unknown, options: QuestionOption[], isMultiSelect:
 const quoteOf = (value: unknown) => String(value ?? '').trim()
 
 const LIST_MARKER = '(?:[-*+]|\\d+[.)])\\s+'
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/
-const CLOSING_FENCE = /^ {0,3}(`{3,}|~{3,})\s*$/
-// 들여쓰기 · 목록 · 인용 안의 fence 와 info string 에 backtick 이 든 줄은 코드 블록의 범위를 줄 단위로 정할 수 없다.
-const UNCLEAR_FENCE = new RegExp(`^(?: {4,}|\\t| {0,3}(?:>|${LIST_MARKER})).*(?:\`{3,}|~{3,})|^ {0,3}\`{3,}[^\`\\n]*\`.*$`, 'm')
+const FENCE_LINE = /^(`{3,}|~{3,})/
+const CLOSING_FENCE = /^(`{3,}|~{3,})\s*$/
+// 들여쓰기 · 목록 · 인용 안의 fence 는 목록이 끝나면 함께 닫히므로 줄 단위로 범위를 정할 수 없다.
+// info string 에 backtick 이 든 줄은 fence 가 아니다. 둘 다 있으면 응답 전체를 권장 없음으로 본다.
+const UNCLEAR_FENCE = new RegExp(`^(?:[ \\t]+|>|${LIST_MARKER}).*(?:\`{3,}|~{3,})|^\`{3,}[^\`\\n]*\`.*$`, 'm')
 const QUOTE_LINE = new RegExp(`^\\s*(?:${LIST_MARKER})*>`)
 const INDENTED_LINE = /^( {4}|\t)/
 const RELAYING_HTML = /<(?:!--|(?:pre|blockquote|script)\b)/i
@@ -389,10 +390,10 @@ const ownProse = (text: string) => {
   return kept.join('\n')
 }
 
-// 줄바꿈 하나는 문장을 끝내지 않는다. 빈 줄과 문장 부호에서만 나눈다.
+// 줄바꿈 하나는 문장을 끝내지 않는다. 빈 줄과 문장 부호(뒤에 붙은 강조 표시 포함)에서만 나눈다.
 const toSentences = (text: string) =>
   text
-    .split(/(?<=[.!?。！？])\s+|\n\s*\n/)
+    .split(/(?<=[.!?。！？][*_`"')\]]*)\s+|\n\s*\n/)
     .map(sentence => sentence.replace(/\s*\n\s*/g, ' ').trim())
     .filter(sentence => sentence != '')
 
@@ -430,6 +431,7 @@ const findStatedQuestion = (
   const askedSentences = sentences.filter(sentence => sentence.includes(asked))
   const [question] = askedSentences
   if (question == undefined || askedSentences.length > 1) return undefined
+  if (question.split(QUESTION_MARKS).length > 2) return undefined
   if (!sentences.some(sentence => sentence.includes(quote))) return undefined
 
   const askedAt = sentences.indexOf(question)
