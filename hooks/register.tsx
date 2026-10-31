@@ -34,7 +34,7 @@ const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
 // auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
-const AUTO_CHECK_VERSION = 4
+const AUTO_CHECK_VERSION = 5
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -54,6 +54,8 @@ const RECOMMENDATION_WORDS = /\b(i|we)(['’]d| would| strongly| also)* (recomme
 // 권장 표현과 같은 문장에 있으면 부정 · 비교 · 조건일 수 있어 auto 가 답하지 않는다.
 const NEGATION_WORDS = /\b(not|no|never|cannot|avoid|against|over|instead|rather|if|unless)\b|n['’]t\b|않|말아|말고|말라|마세요|못|안\s*[해하되돼됨됩된]|안 |비권장|비추천|대신|보다|면\s/i
 const QUESTION_MARKS = /[?？]/
+// 문장 부호와 닫는 표시 뒤에 글이 이어지면 권장 표현과 항목 이름이 다른 문장에 있을 수 있다.
+const INNER_SENTENCE_END = /[.!。！][*_`"'’”)\]]+\s+\S/
 const MIN_AUTO_LABEL_LENGTH = 2
 const NOT_STATED_NOTE = 'Auto mode leaves this open: the response states no recommendation.'
 const NO_ANSWER_TOAST = 'No answer given. The question stays open.'
@@ -408,6 +410,7 @@ const isRecommending = (sentence: string, recommended: string[], others: string[
   RECOMMENDATION_WORDS.test(sentence) &&
   !NEGATION_WORDS.test(sentence) &&
   !QUESTION_MARKS.test(sentence) &&
+  !INNER_SENTENCE_END.test(sentence) &&
   recommended.every(label => [...label].length >= MIN_AUTO_LABEL_LENGTH && hasLabel(sentence, label)) &&
   !others.some(label => hasLabel(sentence, label))
 
