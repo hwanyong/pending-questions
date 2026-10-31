@@ -47,7 +47,11 @@ const MORE_OPTIONS: QuestionOption = {
 const NOTHING_PICKED = 'None of these'
 const NOT_A_QUESTION = 'Not a question'
 // auto 판정에 쓰는 권장 표현. 이 목록에 없는 언어의 응답은 auto 가 답하지 않고 열어 둔다.
-const RECOMMENDATION_WORDS = /recommend|suggest|prefer|권장|추천|권합/i
+const RECOMMENDATION_WORDS = /\b(recommend|suggest|prefer)|권장|추천|권합/i
+// 권장 표현과 같은 문장에 있으면 부정이나 비교일 수 있어 auto 가 답하지 않는다.
+const NEGATION_WORDS = /\b(not|no|never|avoid|against|over|instead|rather)\b|n't\b|않|말아|말고|말라|마세요|비권장|대신|보다/i
+const QUESTION_MARKS = /[?？]/
+const MIN_AUTO_LABEL_LENGTH = 2
 const NOT_STATED_NOTE = 'Auto mode leaves this open: the response states no recommendation.'
 const NO_ANSWER_TOAST = 'No answer given. The question stays open.'
 const FALLBACK_OPTION: QuestionOption = {
@@ -122,10 +126,21 @@ const logDir = async ($: EngineInterface) => {
   return `${base}/pending-questions`
 }
 
+// askedQuote 가 없는 항목은 인용 대조가 더 약했던 판본이 저장했다. 판정을 믿지 않고 사람에게 돌려준다.
+const upgradeItem = (item: PendingQuestion): PendingQuestion => {
+  if (typeof item.askedQuote == 'string') return item
+
+  const upgraded = { ...item, askedQuote: '', isRecommendationStated: false }
+  return item.answeredBy == 'auto' && !item.isDelivered
+    ? { ...upgraded, answeredBy: '', answer: '' }
+    : upgraded
+}
+
 const parseLog = (text: string): QuestionLog | undefined => {
   try {
     const parsed = JSON.parse(text)
-    return parsed.version == LOG_VERSION ? parsed : undefined
+    if (parsed.version != LOG_VERSION) return undefined
+    return { ...parsed, items: parsed.items.map(upgradeItem) }
   } catch {
     return undefined
   }
@@ -226,6 +241,10 @@ const formatAnswer = (item: PendingQuestion) =>
   item.answeredBy == 'auto'
     ? `Question: ${item.askedQuote}\nAnswer (auto mode, recommended): ${item.answer}`
     : `Question: ${item.question}\nAnswer: ${item.answer}`
+
+// 히스토리에는 auto 가 실제로 보낸 질문 문구를 표시한다. 이전 판본의 항목은 인용이 없다.
+const historyQuestion = (item: PendingQuestion) =>
+  item.answeredBy == 'auto' && item.askedQuote != '' ? item.askedQuote : item.question
 
 const isWaitingDelivery = (item: PendingQuestion) => !isOpen(item) && !item.isDelivered
 
@@ -329,17 +348,45 @@ const toRecommended = (value: unknown, options: QuestionOption[], isMultiSelect:
 
 const quoteOf = (value: unknown) => String(value ?? '').trim()
 
+// 응답이 옮겨 적은 글은 응답 자신의 말이 아니므로 인용 블록과 코드 블록을 대조 대상에서 뺀다.
+const ownProse = (text: string) =>
+  text
+    .replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?(?:^ {0,3}\1.*$|(?![\s\S]))/gm, '')
+    .split('\n')
+    .filter(line => !/^\s*>/.test(line))
+    .join('\n')
+
+// 한국어 조사가 라벨에 바로 붙으므로 영문자 · 숫자만 낱말로 본다. `main` 은 `main.py` 에 맞지 않는다.
+const hasLabel = (sentence: string, label: string) => {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![A-Za-z0-9_][./-]|[A-Za-z0-9_])${escaped}(?![./-]?[A-Za-z0-9_])`).test(sentence)
+}
+
+const isRecommending = (sentence: string, recommended: string[], others: string[]) =>
+  RECOMMENDATION_WORDS.test(sentence) &&
+  !NEGATION_WORDS.test(sentence) &&
+  recommended.every(label => [...label].length >= MIN_AUTO_LABEL_LENGTH && hasLabel(sentence, label)) &&
+  !others.some(label => hasLabel(sentence, label))
+
 // 추출 모델의 출력은 응답 밖의 글에 속았을 수 있으므로 auto 로 보낼 문자열을 응답 본문과 대조한다.
 const isStatedInResponse = (
   found: ExtractedQuestion,
   recommended: string[],
+  options: QuestionOption[],
   head: UnreadResponse,
 ) => {
   const asked = quoteOf(found.question_quote)
   const quote = quoteOf(found.recommendation_quote)
-  if (asked == '' || quote == '') return false
-  if (!head.text.includes(asked) || !head.text.includes(quote)) return false
-  return RECOMMENDATION_WORDS.test(quote) && recommended.every(label => quote.includes(label))
+  if (!QUESTION_MARKS.test(asked) || quote == '') return false
+  if (asked.includes('\n') || quote.includes('\n')) return false
+
+  const prose = ownProse(head.text)
+  if (!prose.includes(asked) || !prose.includes(quote)) return false
+
+  const others = options.map(option => option.label).filter(label => !recommended.includes(label))
+  return quote
+    .split(/(?<=[.!?。！？])\s+/)
+    .some(sentence => isRecommending(sentence, recommended, others))
 }
 
 const toQuestion = (
@@ -363,7 +410,7 @@ const toQuestion = (
     detail: String(found.detail ?? ''),
     options: [...options.filter(isRecommended), ...options.filter(one => !isRecommended(one))],
     recommended,
-    isRecommendationStated: isStatedInResponse(found, recommended, head),
+    isRecommendationStated: isStatedInResponse(found, recommended, options, head),
     askedQuote: quoteOf(found.question_quote),
     isMultiSelect,
     answeredBy: '',
@@ -974,7 +1021,7 @@ export const register: Register = on => {
         {history.map(item => (
           <Box flexDirection="column">
             <Text dimColor>
-              {historyFlag(item.answeredBy)} {item.id}. {item.question} → {item.answer}
+              {historyFlag(item.answeredBy)} {item.id}. {historyQuestion(item)} → {item.answer}
               {item.isDelivered ? '' : ' (sending)'}
             </Text>
             {isReopenable(item) && (
