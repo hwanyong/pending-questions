@@ -33,6 +33,8 @@ const MAX_TOOL_CHARS = 1000
 const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
+// auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
+const AUTO_CHECK_VERSION = 1
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -47,9 +49,10 @@ const MORE_OPTIONS: QuestionOption = {
 const NOTHING_PICKED = 'None of these'
 const NOT_A_QUESTION = 'Not a question'
 // auto 판정에 쓰는 권장 표현. 이 목록에 없는 언어의 응답은 auto 가 답하지 않고 열어 둔다.
-const RECOMMENDATION_WORDS = /\b(recommend|suggest|prefer)|권장|추천|권합/i
-// 권장 표현과 같은 문장에 있으면 부정이나 비교일 수 있어 auto 가 답하지 않는다.
-const NEGATION_WORDS = /\b(not|no|never|avoid|against|over|instead|rather)\b|n't\b|않|말아|말고|말라|마세요|비권장|대신|보다/i
+// prefer · suggest 는 다른 사람의 취향을 말할 때도 쓰므로 영어는 직접 권하는 형태만 받는다.
+const RECOMMENDATION_WORDS = /\b(i|we)(['’]d| would| strongly| also)* (recommend|suggest|prefer)\b|\brecommended\b|\brecommendation\b|^\W*(recommend|suggest)\b|권장|추천|권합/i
+// 권장 표현과 같은 문장에 있으면 부정 · 비교 · 조건일 수 있어 auto 가 답하지 않는다.
+const NEGATION_WORDS = /\b(not|no|never|cannot|avoid|against|over|instead|rather|if|unless)\b|n['’]t\b|않|말아|말고|말라|마세요|못|안 |비권장|비추천|대신|보다|면\s/i
 const QUESTION_MARKS = /[?？]/
 const MIN_AUTO_LABEL_LENGTH = 2
 const NOT_STATED_NOTE = 'Auto mode leaves this open: the response states no recommendation.'
@@ -71,7 +74,7 @@ const INITIAL_LOG: QuestionLog = {
 
 // 항목의 필드를 바꾸면 tag 를 바꾼다. 이전 버전이 저장한 값은 다시 불러와도 남아 있다.
 const logAtom = atom({ plugin: 'pending-questions', key: 'log' } as const, INITIAL_LOG, {
-  shape: 'log-4',
+  shape: 'log-5',
 })
 const othersAtom = atom({ plugin: 'pending-questions', key: 'others' } as const, [], {
   shape: 'others-1',
@@ -126,11 +129,16 @@ const logDir = async ($: EngineInterface) => {
   return `${base}/pending-questions`
 }
 
-// askedQuote 가 없는 항목은 인용 대조가 더 약했던 판본이 저장했다. 판정을 믿지 않고 사람에게 돌려준다.
+// 다른 판정 조건으로 저장된 판정은 믿지 않고 사람에게 돌려준다. 응답 원문이 없어 다시 판정할 수 없다.
 const upgradeItem = (item: PendingQuestion): PendingQuestion => {
-  if (typeof item.askedQuote == 'string') return item
+  if (item.autoCheckVersion == AUTO_CHECK_VERSION) return item
 
-  const upgraded = { ...item, askedQuote: '', isRecommendationStated: false }
+  const upgraded = {
+    ...item,
+    askedQuote: item.askedQuote ?? '',
+    isRecommendationStated: false,
+    autoCheckVersion: AUTO_CHECK_VERSION,
+  }
   return item.answeredBy == 'auto' && !item.isDelivered
     ? { ...upgraded, answeredBy: '', answer: '' }
     : upgraded
@@ -236,7 +244,7 @@ const answerOpenWithRecommended = (log: QuestionLog): QuestionLog => {
   }
 }
 
-// auto 의 질문 문구는 응답과 대조한 인용이다. 추출 모델이 지은 문장을 사람 없이 보내지 않는다.
+// auto 의 질문 문구는 응답에서 찾은 문장이다. 추출 모델이 지은 문장을 사람 없이 보내지 않는다.
 const formatAnswer = (item: PendingQuestion) =>
   item.answeredBy == 'auto'
     ? `Question: ${item.askedQuote}\nAnswer (auto mode, recommended): ${item.answer}`
@@ -348,13 +356,42 @@ const toRecommended = (value: unknown, options: QuestionOption[], isMultiSelect:
 
 const quoteOf = (value: unknown) => String(value ?? '').trim()
 
-// 응답이 옮겨 적은 글은 응답 자신의 말이 아니므로 인용 블록과 코드 블록을 대조 대상에서 뺀다.
-const ownProse = (text: string) =>
+const LIST_MARKER = '(?:[-*+]|\\d+[.)])\\s+'
+const OPENING_FENCE = new RegExp(`^\\s*(?:${LIST_MARKER}|>\\s*)*(\`{3,}|~{3,})`)
+const CLOSING_FENCE = /^[\s>]*(`{3,}|~{3,})\s*$/
+const QUOTE_LINE = new RegExp(`^\\s*(?:${LIST_MARKER})*>`)
+const INDENTED_LINE = /^( {4}|\t)/
+const RELAYING_HTML = /<(?:!--|(?:pre|blockquote|script)\b)/i
+
+const closesFence = (line: string, fence: string) => {
+  const closing = line.match(CLOSING_FENCE)?.[1]
+  return closing != undefined && closing[0] == fence[0] && closing.length >= fence.length
+}
+
+// 응답이 옮겨 적은 글은 응답 자신의 말이 아니므로 대조 대상에서 뺀다. 구조가 애매한 줄은 코드로 본다.
+// 잘못 빼면 사람이 한 번 더 답하면 되고, 잘못 남기면 사람 없이 답이 나간다.
+const ownProse = (text: string) => {
+  if (RELAYING_HTML.test(text)) return ''
+
+  const kept: string[] = []
+  let fence = ''
+  for (const line of text.split('\n')) {
+    if (fence != '') {
+      if (closesFence(line, fence)) fence = ''
+      continue
+    }
+    const opening = line.match(OPENING_FENCE)?.[1]
+    if (opening != undefined) fence = opening
+    else if (!QUOTE_LINE.test(line) && !INDENTED_LINE.test(line)) kept.push(line)
+  }
+  return kept.join('\n')
+}
+
+const toSentences = (text: string) =>
   text
-    .replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?(?:^ {0,3}\1.*$|(?![\s\S]))/gm, '')
-    .split('\n')
-    .filter(line => !/^\s*>/.test(line))
-    .join('\n')
+    .split(/(?<=[.!?。！？])\s+|\n+/)
+    .map(sentence => sentence.trim())
+    .filter(sentence => sentence != '')
 
 // 한국어 조사가 라벨에 바로 붙으므로 영문자 · 숫자만 낱말로 본다. `main` 은 `main.py` 에 맞지 않는다.
 const hasLabel = (sentence: string, label: string) => {
@@ -365,11 +402,19 @@ const hasLabel = (sentence: string, label: string) => {
 const isRecommending = (sentence: string, recommended: string[], others: string[]) =>
   RECOMMENDATION_WORDS.test(sentence) &&
   !NEGATION_WORDS.test(sentence) &&
+  !QUESTION_MARKS.test(sentence) &&
   recommended.every(label => [...label].length >= MIN_AUTO_LABEL_LENGTH && hasLabel(sentence, label)) &&
   !others.some(label => hasLabel(sentence, label))
 
-// 추출 모델의 출력은 응답 밖의 글에 속았을 수 있으므로 auto 로 보낼 문자열을 응답 본문과 대조한다.
-const isStatedInResponse = (
+// 두 문장 사이에 다른 질문이 있으면 이 권장이 어느 질문의 것인지 정할 수 없다.
+const isSameQuestion = (sentences: string[], first: number, second: number) =>
+  !sentences
+    .slice(Math.min(first, second) + 1, Math.max(first, second))
+    .some(sentence => QUESTION_MARKS.test(sentence))
+
+// 추출 모델의 출력은 응답 밖의 글에 속았을 수 있고 인용은 모델이 고른 조각이다. 인용으로 응답의 문장을
+// 찾아 그 문장 전체를 판정하고, auto 로 보낼 질문 문장을 돌려준다. 통과하지 못하면 undefined 다.
+const findStatedQuestion = (
   found: ExtractedQuestion,
   recommended: string[],
   options: QuestionOption[],
@@ -377,16 +422,22 @@ const isStatedInResponse = (
 ) => {
   const asked = quoteOf(found.question_quote)
   const quote = quoteOf(found.recommendation_quote)
-  if (!QUESTION_MARKS.test(asked) || quote == '') return false
-  if (asked.includes('\n') || quote.includes('\n')) return false
+  if (!QUESTION_MARKS.test(asked) || quote == '') return undefined
 
-  const prose = ownProse(head.text)
-  if (!prose.includes(asked) || !prose.includes(quote)) return false
+  const sentences = toSentences(ownProse(head.text))
+  const askedSentences = sentences.filter(sentence => sentence.includes(asked))
+  const [question] = askedSentences
+  if (question == undefined || askedSentences.length > 1) return undefined
+  if (!sentences.some(sentence => sentence.includes(quote))) return undefined
 
+  const askedAt = sentences.indexOf(question)
   const others = options.map(option => option.label).filter(label => !recommended.includes(label))
-  return quote
-    .split(/(?<=[.!?。！？])\s+/)
-    .some(sentence => isRecommending(sentence, recommended, others))
+  const isStated = sentences.every(
+    (sentence, at) =>
+      !sentence.includes(quote) ||
+      (isRecommending(sentence, recommended, others) && isSameQuestion(sentences, askedAt, at)),
+  )
+  return isStated ? question : undefined
 }
 
 const toQuestion = (
@@ -402,6 +453,7 @@ const toQuestion = (
   const isMultiSelect = found.kind == 'multi' && options.length > 1
   const recommended = toRecommended(found.recommended, options, isMultiSelect)
   const isRecommended = (option: QuestionOption) => recommended.includes(option.label)
+  const statedQuestion = findStatedQuestion(found, recommended, options, head)
 
   return {
     id,
@@ -410,8 +462,9 @@ const toQuestion = (
     detail: String(found.detail ?? ''),
     options: [...options.filter(isRecommended), ...options.filter(one => !isRecommended(one))],
     recommended,
-    isRecommendationStated: isStatedInResponse(found, recommended, options, head),
-    askedQuote: quoteOf(found.question_quote),
+    isRecommendationStated: statedQuestion != undefined,
+    askedQuote: statedQuestion ?? '',
+    autoCheckVersion: AUTO_CHECK_VERSION,
     isMultiSelect,
     answeredBy: '',
     answer: '',
@@ -881,6 +934,7 @@ export const register: Register = on => {
         recommended: nativeRecommended(asked),
         isRecommendationStated: true,
         askedQuote: asked.question,
+        autoCheckVersion: AUTO_CHECK_VERSION,
         isMultiSelect: asked.multiSelect,
         answeredBy: 'auto' as const,
         answer: answerOf(asked),

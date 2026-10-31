@@ -16,8 +16,10 @@ export type PendingQuestion = {
   recommended: string[]
   // 질문과 권장 항목을 응답 본문에서 대조했으면 true. false 면 auto 가 보내지 않는다.
   isRecommendationStated: boolean
-  // 응답에서 이 질문을 묻는 부분의 인용. auto 답을 보낼 때 question 대신 쓴다.
+  // 응답에서 이 질문을 묻는 문장 전체. auto 답을 보낼 때 question 대신 쓴다. 판정을 통과하지 못하면 '' 이다.
   askedQuote: string
+  // 이 판정을 낸 조건의 버전. register.tsx 의 AUTO_CHECK_VERSION 과 다르면 판정을 믿지 않는다.
+  autoCheckVersion: number
   isMultiSelect: boolean
   answeredBy: AnsweredBy
   answer: string

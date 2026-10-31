@@ -72,10 +72,12 @@ History marks each closed question:
 
 Auto mode answers without showing you the question, so it has these limits:
 
-- It answers only when the response itself recommends an answer. The extraction model must quote the question and the recommendation, and the plugin checks both quotes against the response, leaving out blockquotes and code blocks because those usually relay text from elsewhere.
-- The question quote must contain a question mark. One sentence of the recommendation quote must contain the chosen label as a whole word (at least 2 characters), one of `recommend`, `suggest`, `prefer`, `권장`, `추천` or `권합`, no other option's label, and no negation or comparison word such as `not`, `over` or `않`.
+- It answers only when the response itself recommends an answer. The extraction model must quote the question and the recommendation, and the plugin uses each quote only to find a whole sentence in the response. Blockquotes, code blocks and HTML blocks are left out, because those usually relay text from elsewhere, and any structure the plugin cannot tell apart counts as a code block.
+- The question sentence must appear once and contain a question mark, and no other question may stand between it and the recommendation sentence.
+- The recommendation sentence must contain the chosen label as a whole word (at least 2 characters) and a direct recommendation (`I recommend`, `we suggest`, `I prefer`, `recommended`, `recommendation`, `권장`, `추천` or `권합`). It must not contain another option's label, a question mark, or a negation, comparison or condition word such as `not`, `over`, `if`, `않` or `비추천`.
 - Any other question stays open, with a note in the pane. That includes every recommendation written in another language and sentences that name both options, such as "A 와 B 중 A 를 권장합니다".
-- The text it sends uses the verified quote, not the question the model wrote, and History shows that quote. Claude reads it framed as `The pending-questions plugin sent a message:`, not as something you said. Answers you give yourself are sent as your words.
+- Verdicts saved under an earlier version of these checks are not trusted: those questions return to you.
+- The text it sends uses the question sentence from the response, not the question the model wrote, and History shows that sentence. Claude reads it framed as `The pending-questions plugin sent a message:`, not as something you said. Answers you give yourself are sent as your words.
 - A question Claude asks through the `AskUserQuestion` tool is answered only when every question in the call has an option marked `(Recommended)`. Otherwise the dialog opens.
 - After 5 automatic answers in a row it pauses until you type a prompt or answer a question.
 
@@ -95,7 +97,7 @@ Each session writes to two files in turn, `<sessionId>.0.json` and `<sessionId>.
 ## Limitations
 
 - Extraction is done by a model, so it can miss a question, register something that is not one, or close one wrongly. The corrections above undo these; they do not prevent them.
-- Auto mode checks words, not meaning. A sentence in Claude's own prose that passes the checks above but means something else is still sent, including text it relays without a blockquote or code block.
+- Auto mode checks words and sentence positions, not meaning. No word list is complete. A sentence that passes the checks above but means something else is still sent, including text Claude relays as plain prose and a recommendation attributed to someone else ("the docs recommended a.txt"). Use auto mode only where a wrong answer is cheap to undo.
 - The extraction input includes the turn's tool output, because a tool result can settle a question. The input is marked as data with randomized tags, but a file or web page that Claude read could still mislead the extraction model into registering or closing a question wrongly. Auto mode does not send such a question unless both quotes pass the check above; check the pane for entries you do not recognize.
 - Recovery was tested with `kill -9`. A real power loss or reboot has not been tested. Whether data survives also depends on the drive honoring the flush.
 - Tested on macOS with Claude Code 2.1.312 in a terminal. Not tested: Linux, Windows, mobile (where free-form questions fall back to a dialog with `Decide later`), the desktop app and `claude --bg`.
