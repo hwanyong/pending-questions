@@ -32,7 +32,7 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 - `record.py` 는 `DEMO_ROOT/home` 을 `HOME` 으로 쓰고, tmux 소켓 `pq-demo` 의 120x36 창에서 `claude --plugin-dir <저장소> --model haiku` 를 실행한다. 응답은 `--append-system-prompt-file` 로 고정한다. 로그인은 키체인 폴더 링크로 재사용하므로 계정 사용량을 쓴다.
 - 녹화 중에 저장소 파일을 고치지 않는다. 2026-10-31 에 `plugin.json` · `README.md` · `record.py` 를 고친 시각마다 세션에 `plugin.json changed — reloaded` 줄이 찍혔고, 한 번은 고정한 응답 대신 `Noted.` 가 나와 `overview` 장면이 시간 초과로 멈췄다. `plugin.json` 이 아닌 파일을 고쳤을 때도 이 줄이 나온 원인은 밝히지 못했다. 설치본이 아니라 `--plugin-dir` 에서 나는 동작이다.
 - `render.py` 의 `MASKS` 는 요금제 · 사용량 경고 · Tip · 홍보 문구를 지우고, `FORBIDDEN` 은 지운 뒤에도 남은 문구를 찾는다. `FORBIDDEN` 에 걸리거나 시간이 초과된 장면은 이미지를 쓰지 않고 최대 4회 다시 녹화한다. 재로드 줄 · `Tip:` · 홍보 문구가 든 줄을 넣어 `forbidden_text` 가 그 문구를 반환하는 것을 출력으로 확인했다. 다른 경로(OCR)로 대조하지 않았으므로 녹화 뒤 프레임을 읽어 다시 확인한다.
-- `auto` 장면은 추출 모델이 라벨을 `Blue-green` 으로 적으면 `hasLabel` 이 대소문자를 구분해 `[auto] q1` 에서 멈춘다. 2026-10-31 의 마지막 5회 중 2회였다(§8).
+- 0.1.6 까지 `auto` 장면은 추출 모델이 라벨을 `Blue-green` 으로 적으면 `hasLabel` 이 대소문자를 구분해 `[auto] q1` 에서 멈췄다. 2026-10-31 의 마지막 5회 중 2회였다. 0.1.7 에서 고쳤다(§5).
 - 2026-10-31 측정: `docs/images/` 전체 약 4.3 MB, APNG 7개(각 0.2 ~ 0.7 MB). `social-preview.png` 는 사람이 GitHub Settings 의 Social preview 에 올린다.
 
 ## 3. 폴더
@@ -89,6 +89,7 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 | auto 답의 질문 문구는 `askedQuote` 를 쓰고 `asUser` 없이 제출한다. 사람이 답한 것만 `asUser: true` 다 | 보내는 글자를 응답에 있는 문자열로 한정한다. 사람이 답하지 않은 내용을 사람의 말로 제출하지 않는다 |
 | 추출 입력의 태그 이름에 호출마다 `crypto.randomUUID()` 를 붙인다 | 도구 출력이 `</work_log>` 를 흉내 내 입력 구조를 바꾸지 못하게 한다 |
 | `new` 추출을 도구 출력 없는 별도 호출로 나누지 않았다 | 호출이 두 배가 된다. 가짜 항목은 manual 에서 pane 에 보일 뿐 전달되지 않고, auto 는 위 대조에서 걸러진다 |
+| 라벨은 대소문자를 구분하지 않고 맞춘다(`labelKey`). 선택지 중복 제거(`toOptions`), 권장 라벨과 선택지의 대응(`toRecommended`), 응답 문장 안의 라벨 찾기(`hasLabel`) 세 곳에 같은 규칙을 쓰고 `AUTO_CHECK_VERSION` 을 6 으로 올렸다 | 추출 모델은 응답의 `blue-green` 을 `Blue-green` 으로 적기도 한다. 0.1.6 까지는 그때 권장이 있어도 질문을 열어 두었고, 권장 라벨이 선택지와 대소문자만 달라도 첫 선택지를 권장으로 표시했다. 다른 선택지의 라벨도 대소문자 없이 찾으므로 그 판정은 전보다 엄격해진다 |
 | 모델이 부른 `AskUserQuestion` 은 모든 질문에 `(Recommended)` 표시가 있을 때만 auto 가 답하고, 아니면 dialog 를 연다 | 표시가 없을 때 첫 옵션을 고르면 같은 문제가 난다 |
 | auto 연쇄 상한 `MAX_AUTO_CHAIN = 5` 를 두고 사람 입력에서 0 으로 되돌린다 | auto 답이 새 질문을 낳아 사람 없이 이어지는 것을 끊는다 |
 | `cwd` 는 commit 할 때마다 `$.session.cwd()` 에서 읽는다 | `/clear` 뒤 `logAtom` 이 초기값으로 돌아가 빈 `cwd` 가 저장되었고, 그 파일은 다른 세션 목록에 나오지 않았다 |
@@ -147,6 +148,8 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 | 이전 판본의 파일 | `askedQuote` 가 없고 `isRecommendationStated` 가 true 인 열린 항목과 미전달 `auto` 항목을 넣고 auto 세션을 열었다. 커밋 `e15f36b` 는 `Question: undefined` 를 제출했고 메인 모델이 그 질문을 찾느라 셸 명령 2개를 실행했으며 열린 항목도 답했다. 현재 코드는 두 항목을 열어 두었고, 같은 턴의 새 질문은 `a.txt` 로 답했다 |
 | 두 질문이 든 응답의 실제 세션 | `Should I run the tests, yes or no? I recommend yes. Should I deploy now, yes or no?` 에서 앞 질문만 `yes` 로 답했고 뒤 질문은 열어 두었다. 추출 모델이 뒤 질문의 권장 인용을 비웠으므로 이 세션에서 `followsQuestion` 이 판정을 정한 것은 아니다. 그 조건은 입력 실행으로 확인했다. `autoCheckVersion` 1 로 저장된 열린 항목은 열린 채 남았다 |
 | 판정 조건을 바꾼 뒤의 실제 세션 | `a912670` 형식(`askedQuote` 있음, `autoCheckVersion` 없음)의 열린 항목과 미전달 `auto` 항목을 넣고 auto 세션을 열었다. 두 항목은 열린 채 남았다. 평문 권장 질문은 `a.txt` 로 답했다. 인용 블록으로 출력한 질문은 추출 모델이 권장을 인용했지만 열어 두었다. 제출은 평문 권장 1건뿐이었다 |
+| 라벨 대소문자 입력 범위(2026-11-04) | `toOptions` · `toRecommended` · `hasLabel` · `findStatedQuestion` 을 `hooks/register.tsx` 에서 잘라 낸 스크립트로 11가지 입력을 실행해 모두 기대대로였다. 같은 입력에서 커밋 `f0db0ce` 는 `hasLabel("I recommend blue-green.", "Blue-green")` 이 false, `toRecommended(["rolling"], [Blue-green, Rolling])` 이 `["Blue-green"]`, `toOptions` 가 `Blue-green` · `blue-green` 을 둘 다 남겼다 |
+| 라벨 대소문자 실제 세션(2026-11-04) | 응답 `Should I use Blue-green or Rolling for this deploy? I recommend blue-green.` 에서 추출 모델이 라벨을 `Blue-green` 으로 적었다. 현재 코드는 3회 모두 `[auto]` 로 답했고, 커밋 `f0db0ce` 는 2회 모두 열어 두었다 |
 | `/clear` | pane 이 비고, 이전 파일은 남고, 첫 턴 뒤 이전 세션이 목록에 나온다. 새 파일의 `cwd` 가 채워진다 |
 | `/clear` 뒤 생긴 세션의 열린 질문 | 새 세션의 목록에 나온다. 수정 전 코드의 파일은 `cwd` 가 빈 문자열이었다 |
 | 이 폴더로 옮긴 뒤 | `--plugin-dir` 로 위 `/clear` · `--resume` 시험을 다시 통과했다. `tsc` 종료 코드 0, `claude plugin validate` 는 경고와 함께 통과했다 |
@@ -177,7 +180,7 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 | SMB(복사본) | 없음 | 없음 | 정상 |
 | `/tmp`(현재 코드 · 이전 코드) | 있음 | 있음 · 없음 | 정상 |
 
-- auto 모드의 라벨 비교는 대소문자를 구분한다. 추출 모델이 `Blue-green` 을 내고 응답에 `blue-green` 이 있으면 권장이 있어도 `the response states no recommendation` 으로 남는다. 안전한 쪽으로 틀리지만 안내문이 사실과 다르다. 고치지 않았다.
+- 라벨을 대소문자 없이 맞추므로, 흔한 낱말과 같은 라벨(`Go`)은 권장 문장 안의 그 낱말(`go ahead`)에도 맞는다. 0.1.6 까지도 추출 모델이 라벨을 소문자로 적으면 같았다. 나머지 조건(권장 표현 · 다른 라벨 · 부정어)을 함께 통과해야 auto 가 답한다.
 
 ## 9. 시험하지 않은 것
 

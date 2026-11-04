@@ -590,7 +590,7 @@ SCENES = {
 }
 
 
-# 추출 모델의 출력이 take 마다 달라 auto 장면이 멈출 때가 있다(라벨 대소문자가 응답과 다른 경우).
+# 추출 모델의 출력이 take 마다 달라 장면이 멈출 때가 있다.
 MAX_ATTEMPTS = 4
 
 
@@ -617,4 +617,5 @@ def main():
         make_social_preview()
 
 
-main()
+if __name__ == '__main__':
+    main()

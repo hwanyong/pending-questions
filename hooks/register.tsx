@@ -31,7 +31,7 @@ const MAX_WORK_CHARS = 12000
 const OTHER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const LOG_VERSION = 1
 // auto 판정 조건을 바꾸면 올린다. 다른 값으로 저장된 판정은 믿지 않는다.
-const AUTO_CHECK_VERSION = 5
+const AUTO_CHECK_VERSION = 6
 const SLOTS = [0, 1]
 
 const RECOMMENDED_SUFFIX = ' (Recommended)'
@@ -326,14 +326,19 @@ const parseExtraction = (text: string): Extraction | undefined => {
   }
 }
 
+// 추출 모델은 같은 라벨을 문장 첫머리에서 대문자로 적기도 하므로 라벨은 대소문자를 구분하지 않고 맞춘다.
+const labelKey = (label: string) => label.toLowerCase()
+
 const toOptions = (value: unknown): QuestionOption[] => {
   if (!Array.isArray(value)) return [FALLBACK_OPTION]
 
+  // 대소문자만 다른 라벨은 같은 선택지이므로 먼저 온 것 하나만 남긴다.
   const byLabel = new Map<string, QuestionOption>()
   for (const option of value) {
     const label = String(option?.label ?? '').trim()
-    if (label == '' || byLabel.has(label)) continue
-    byLabel.set(label, { label, description: String(option?.description ?? '') })
+    const key = labelKey(label)
+    if (label == '' || byLabel.has(key)) continue
+    byLabel.set(key, { label, description: String(option?.description ?? '') })
   }
 
   const options = [...byLabel.values()].slice(0, MAX_OPTIONS)
@@ -341,9 +346,9 @@ const toOptions = (value: unknown): QuestionOption[] => {
 }
 
 const toRecommended = (value: unknown, options: QuestionOption[], isMultiSelect: boolean) => {
-  const named = Array.isArray(value) ? value.map(String) : []
+  const named = new Set(Array.isArray(value) ? value.map(one => labelKey(String(one))) : [])
   const labels = options.map(option => option.label)
-  const known = labels.filter(label => named.includes(label))
+  const known = labels.filter(label => named.has(labelKey(label)))
   const chosen = known.length == 0 ? labels : known
   return isMultiSelect && known.length > 0 ? chosen : chosen.slice(0, 1)
 }
@@ -393,9 +398,10 @@ const toSentences = (text: string) =>
     .filter(sentence => sentence != '')
 
 // 한국어 조사가 라벨에 바로 붙으므로 영문자 · 숫자만 낱말로 본다. `main` 은 `main.py` 에 맞지 않는다.
+// 대소문자는 labelKey 와 같이 구분하지 않는다. 다른 선택지의 라벨도 같은 규칙으로 찾아 권장 문장에서 뺀다.
 const hasLabel = (sentence: string, label: string) => {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?<![A-Za-z0-9_][./-]|[A-Za-z0-9_])${escaped}(?![./-]?[A-Za-z0-9_])`).test(sentence)
+  return new RegExp(`(?<![A-Za-z0-9_][./-]|[A-Za-z0-9_])${escaped}(?![./-]?[A-Za-z0-9_])`, 'i').test(sentence)
 }
 
 const isRecommending = (sentence: string, recommended: string[], others: string[]) =>
