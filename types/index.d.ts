@@ -36,11 +36,6 @@ export type UnreadResponse = {
   isRescan?: true
 }
 
-// 답하기 전의 체크와 입력.
-export type QuestionDraft = { picks: string[]; text: string }
-
-export type Drafts = Record<string, QuestionDraft>
-
 export type QuestionLog = {
   version: 1
   seq: number
@@ -58,7 +53,6 @@ declare module 'claude-code' {
     'pending-questions': {
       log: Shaped<QuestionLog>
       others: Shaped<OtherSession[]>
-      drafts: Shaped<Drafts>
     }
   }
 }

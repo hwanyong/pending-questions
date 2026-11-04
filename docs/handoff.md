@@ -75,10 +75,12 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 | 응답을 `unread` 에 먼저 commit 한 뒤 추출하고, 답도 commit 한 뒤 `$.prompt.submit` 한다 | 어느 단계에서 죽어도 세션 시작 때 `drainResponses` · `recoverDeliveries` 가 이어서 처리한다 |
 | 재전송 전에 대화 기록을 대조한다 | 이미 전달된 답을 두 번 보내지 않는다 |
 | 해소 판정은 모델이 하되, `evidence` 를 입력과 코드로 대조한다(`isQuoted`) | 모델이 근거 없이 질문을 닫은 일이 있었다. 비교만 한 도구 출력을 결정으로 판정했다 |
-| 단일 선택은 옵션이 5개 이상이면 3개씩 페이지로 나눈다 | `$.ui.ask` 의 옵션 상한이 4개이고 `ui.render` 로 늘릴 수 없다 |
-| 다중 선택은 dialog 를 쓰지 않고 pane 의 `plain` Button 체크 행 · `Input` · `Send` 로 받는다 | `$.ui.ask` 에 미리 체크하는 인자가 없다. pane 에서는 권장 항목을 `[x]` 로 시작할 수 있다 |
-| 서술형은 pane 의 `Input` 에 권장 답변을 초안으로 넣는다. `Input` 이 없는 surface 에서만 dialog 와 `Decide later` 를 쓴다 | dialog 의 schema 는 옵션을 최소 2개 요구하지만 `Input` 에는 그 제약이 없다. mobile 의 `$.ui.resolve` 표에는 `Input` 이 없다 |
-| 초안은 `draftsAtom` 에 두고 파일에 쓰지 않는다 | 글자마다 쓰기와 flush 가 돌지 않게 한다. 비정상 종료 뒤 초안은 사라지고 질문은 남는다 |
+| 세 종류 모두 pane 의 버튼으로 dialog 를 열어 답을 받는다 | 사용자 요구가 「pane 항목을 선택하면 dialog 를 출력」이다. 0.1.0 ~ 0.1.5 는 다중 선택과 서술형을 pane 의 체크 행 · `Input` · `Send` 로 받았다. 근거로 삼은 「`$.ui.ask` 는 옵션 5개 이상을 거절한다」는 `tool.call` 훅으로 질문을 나누면 풀리는데 그때 시험하지 않았다(§6) |
+| 단일 선택은 옵션이 5개 이상이면 3개씩 페이지로 나누고 `More options` 로 다음 dialog 를 연다 | AskUserQuestion 의 질문 하나는 옵션 4개까지 받는다. 탭은 탭마다 따로 답하므로 하나만 고르는 질문에 쓰지 않는다 |
+| 다중 선택은 옵션을 2~4개씩 고르게 나눠(`splitEvenly`) dialog 의 질문 여러 개(탭)로 한 번에 묻고, 탭의 답을 탭 순서대로 이어 하나의 답으로 돌려준다(`joinTabAnswers`) | 한 dialog 는 질문 4개까지 받으므로 `MAX_OPTIONS` 12 는 탭 3개에 들어간다. 탭마다 옵션이 2개 이상이어야 한다. 권장 항목은 미리 체크할 수 없어 앞자리에 `(Recommended)` 를 붙여 둔다 |
+| 서술형은 dialog 에 권장 초안과 `Decide later` 를 두고 다른 답은 `Type something` 으로 받는다 | 옵션 1개는 InputValidationError 로 거절된다. `Type something` 에 초안을 채우는 인자가 없다 |
+| dialog 는 `ui.press` 훅에서 연다. 그 Button 의 `onPress` 는 실행되지 않는다 | `onPress` closure 에서 연 dialog 에는 이 플러그인의 `tool.call` 훅이 실행되지 않았다(§6). 훅이 기다리는 `$` 호출의 시간은 훅의 budget 에 들지 않으므로 dialog 와 저장을 기다리고, 세션이 idle 이 될 때까지 기다리는 전달은 기다리지 않는다 |
+| 옵션 설명과 탭은 `tool.call` 훅이 넣는다. 그 훅은 pane 에서 연 dialog 인지를 auto 판정보다 먼저 본다 | `$.ui.ask` 는 라벨만 받는다. 이제 그 dialog 에도 이 훅이 실행되므로, 먼저 보지 않으면 auto 모드에서 `(Recommended)` 표시를 보고 사람이 연 dialog 에 자동으로 답한다 |
 | `commit` 은 `$.fs.write` 뒤 `hooks/flush.pl` 을 `inWriteOrder` 안에서 실행한다 | `$.fs` 에 fsync 가 없다. macOS 의 `fsync` 는 드라이브 캐시를 비우지 않아 `F_FULLFSYNC` 를 먼저 쓴다. 실패하면 로그와 toast 를 내고 쓰기는 유지한다 |
 | `prompt.submit` 은 `autoChain` 이 0 이 아닐 때만 commit 한다 | 프롬프트마다 쓰기와 flush 가 돌지 않게 한다 |
 | 모델의 오판은 막지 않고 사람이 되돌리게 한다: `Reopen`(잘못 닫힘) · `Not a question`(잘못 등록) · `Rescan last response`(놓침) | 오판을 0 으로 만들 수 없다. Rescan 은 `RESCAN_MODEL`(sonnet)로 다시 읽고, 그때만 닫힌 질문을 `<known_questions>` 로 넘겨 중복 등록을 막는다 |
@@ -102,6 +104,12 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 | `multiSelect: true` | 체크박스와 검토 화면이 나오고 답은 `"a, c"` 형식이다 |
 | 다중 선택에서 아무것도 고르지 않고 제출 | reject: `The user did not answer the questions.` |
 | `ui.render` 로 `questions` rewrite | 옵션 수 변경 · 질문 분할은 무시되고 설명 추가만 적용된다 |
+| `$.tool.call` 로 AskUserQuestion 을 직접 호출 | 거절: `tool.call: runs the AskUserQuestion tool: that is $.ui.ask (host check)` |
+| `$.ui.ask` 의 `tool.call` 을 훅에서 `next({ ...e, questions })` 로 바꿈 | 질문 2개(옵션 4개 + 2개)가 한 dialog 의 탭 두 개로 열리고 설명도 표시된다. 결과의 `answers` 에 질문마다 답이 들어오며, 훅이 원래 질문 키로 합쳐 돌려주면 `$.ui.ask` 가 그 값을 반환한다 |
+| 같은 rewrite 에서 한 탭을 비우고 제출 | `⚠ You have not answered all questions` 를 보이고 제출을 받는다. 빈 탭은 `answers` 에 없다 |
+| 같은 rewrite 에 `answers` 를 넣음 | 체크된 채 열리지 않고, 결과에는 사람이 고른 값만 남는다 |
+| 같은 rewrite 에서 질문 하나의 옵션을 1개 · 6개로 바꿈 | `InputValidationError`(`>=2 items` · `<=4 items`)로 dialog 가 열리지 않는다 |
+| Button 의 `onPress` 에서 `$.ui.ask` | 그 플러그인의 `tool.call` 훅이 실행되지 않는다: `hooks module pending-questions@inline tool.call skipped: re-entry (the plugin's own code raised it; origin pending-questions)`. `ui.press` 훅이나 `command.run` 훅 안에서 부르면 그 훅만 건너뛴다 |
 | `--resume` | 같은 세션 id 를 유지한다 |
 | `/clear` | 세션 id 가 바뀌고 `session.start` 가 돌지 않으며 `$.state` 가 초기값으로 돌아간다 |
 | 플러그인 자신의 `$.prompt.submit` | 자기 훅을 건너뛴다(`skipped: re-entry`). 세션이 idle 이 된 뒤 들어가므로 훅 안에서 await 하지 않는다 |
@@ -110,9 +118,10 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 
 | 항목 | 결과 |
 |---|---|
-| 다중 선택 | 권장 항목이 `[x]` 로 시작했고, 토글과 포커스 유지, 빠른 입력 42글자 유실 없음. `node_modules/, dist/, abcdefghijklmnopqrstuvwxyz0123456789-` 로 전달됐다. auto 는 `aa, cc` 로 답했다 |
-| 단일 선택 6개 | `(1/2)` · `More options` · `(2/2)` 로 이어졌고, 2페이지 Esc 에 질문이 열린 채 남았다 |
-| 서술형 | 권장 초안이 든 `Input` 이 표시됐고, `-v2` 를 덧붙여 Enter 하자 `Answer: skyline-tools-v2` 로 전달됐다 |
+| 다중 선택 6개(2026-11-04) | 탭 `Alerts 1` · `Alerts 2` 에 3개씩, 설명과 함께 열렸다. 1번 탭에서 latency · errors, 2번 탭에서 traffic 을 골라 제출하자 `Answer: latency, errors, traffic` 으로 전달됐다 |
+| 단일 선택 6개 | `(1/2)` · `More options` · `(2/2)` 로 이어졌고, 2페이지 Esc 에 질문이 열린 채 남았다. 2026-11-04 에 `ui.press` 훅으로 연 뒤 2페이지에도 설명이 표시되고 `Answer: eu-central-1` 로 전달됐다 |
+| 서술형(2026-11-04) | dialog 에 `Billing 2.4 rollout in progress (Recommended)` · `Decide later` · `Type something.` 이 나왔고, `Type something` 에 입력하자 `Answer: Billing 2.4 rollout in progress until 18:00` 으로 전달됐다 |
+| auto 모드에서 사람이 연 dialog(2026-11-04) | 권장이 없는 질문을 pane 에서 열자 dialog 가 열렸고 `1 hour` 가 `[manual]` 로 전달됐다. 같은 세션에서 모델이 부른 AskUserQuestion 은 dialog 없이 `Blue (Recommended)` 로 답했다 |
 | `Not a question` · `Reopen` | 파일에 `dismissed` 로 기록되어 히스토리에 표시됐고, `Reopen` 으로 다시 열렸다 |
 | `Rescan last response` | 항목을 지운 파일로 `--resume` 한 뒤 `claude-sonnet-5-5` 가 빠진 질문을 다시 등록했다. 다시 실행하자 `Rescan found no new questions.` 가 나왔다 |
 | flush | 종료 코드 정상 0 · 없는 파일 2 · 인자 없음 255. 호출당 12 ms ~ 17 ms. `hooks/flush.pl` 을 치웠을 때와 perl 시작 실패(`ENOENT`) 때 로그와 toast 가 나왔고 파일은 갱신됐다 |
@@ -151,7 +160,9 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 - 응답의 `new` 추출은 도구 출력을 함께 받는다. 추출을 두 번으로 나누면 응답마다 모델 호출이 하나 늘어나므로 나누지 않았고, `new` 는 응답 본문 대조로 막는다.
 - `RECOMMENDATION_WORDS` 는 영어 · 한국어 낱말 목록이다. 다른 언어의 권장은 auto 가 답하지 않고 열어 둔다.
 - 도구 출력이 추출 모델을 속이면 가짜 항목이 pane 에 등록되거나 열린 질문이 닫힐 수 있다. 닫기의 근거 대조(`isQuoted`)는 도구 출력도 근거로 인정한다.
-- `Input` 이 없는 surface(mobile)에서는 서술형 dialog 에 `Decide later` 가 하나 더 나온다. 이 경로는 실행하지 못했다.
+- 다중 선택의 권장 항목은 체크된 채 열리지 않는다. 앞자리의 `(Recommended)` 표시를 보고 사람이 체크한다.
+- 서술형의 권장 초안을 고쳐 쓰려면 `Type something` 에 처음부터 입력한다.
+- 다중 선택에서 아무것도 고르지 않으면 제출할 수 없다. 탭이 여럿이면 일부 탭만 비워 둘 수 있다.
 - 모델의 추출 · 해소 오판은 그대로 일어날 수 있다. 사람이 `Reopen` · `Not a question` · `Rescan last response` 로 되돌린다.
 - `Chat about this` 는 모델에 전달되지 않는다.
 - 추출 비용을 재지 못했다. 디버그 로그의 usage 가 `[REDACTED]` 다.
@@ -173,7 +184,7 @@ DEMO_ROOT=<저장소 밖 폴더> PYTHONDONTWRITEBYTECODE=1 python verification/d
 - Nimbalyst · `claude --bg` 에서의 표시
 - 응답 출력 중 dialog
 - 재부팅 · 전원 차단 뒤 복구(`kill -9` 만 시험했다)
-- mobile 의 `Input` 대체 경로
+- mobile · desktop 에서 탭으로 나눈 다중 선택 dialog
 
 ## 10. 남은 일
 

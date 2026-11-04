@@ -1,13 +1,11 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionMessage, ToolUseSummary } from 'claude-code'
+import type { EngineInterface, Register, SessionMessage, ToolCallResult, ToolUseSummary } from 'claude-code'
 
 import type {
   AnswerMode,
   AnsweredBy,
-  Drafts,
   OtherSession,
   PendingQuestion,
-  QuestionDraft,
   QuestionLog,
   QuestionOption,
   UnreadResponse,
@@ -21,8 +19,7 @@ const EXTRACT_MODEL = 'haiku'
 const RESCAN_MODEL = 'sonnet'
 const MAX_HEADER = 12
 const MAX_OPTIONS = 12
-// $.ui.ask 가 받는 선택지 수. 5개 이상은 거절하고 1개는 엔진이 Yes 를 채운다. 그래서 서술형과 다중
-// 선택은 pane 의 Input 과 Button 으로 받고, 단일 선택만 dialog 를 쓴다.
+// AskUserQuestion 의 질문 하나가 받는 선택지 수. 5개 이상과 1개는 InputValidationError 로 거절된다.
 const MAX_DIALOG_OPTIONS = 4
 const PAGE_SIZE = 3
 const MAX_EXTRACT_ATTEMPTS = 3
@@ -46,7 +43,6 @@ const MORE_OPTIONS: QuestionOption = {
   label: 'More options',
   description: 'Shows the next options.',
 }
-const NOTHING_PICKED = 'None of these'
 const NOT_A_QUESTION = 'Not a question'
 // auto 판정에 쓰는 권장 표현. 이 목록에 없는 언어의 응답은 auto 가 답하지 않고 열어 둔다.
 // prefer · suggest 는 다른 사람의 취향을 말할 때도 쓰므로 영어는 직접 권하는 형태만 받는다.
@@ -80,10 +76,6 @@ const logAtom = atom({ plugin: 'pending-questions', key: 'log' } as const, INITI
 })
 const othersAtom = atom({ plugin: 'pending-questions', key: 'others' } as const, [], {
   shape: 'others-1',
-})
-// 답하기 전의 체크와 입력. 사람이 다시 입력하면 되는 값이라 파일에 쓰지 않는다.
-const draftsAtom = atom({ plugin: 'pending-questions', key: 'drafts' } as const, {}, {
-  shape: 'drafts-1',
 })
 
 const EXTRACT_SYSTEM = `Extract the questions and decisions in a Claude Code response that wait for the user's answer. Output one JSON object and nothing else.
@@ -648,7 +640,15 @@ const setMode = async ($: EngineInterface, mode: AnswerMode) => {
   await deliverAnswers($)
 }
 
-type DialogPage = { question: string; options: QuestionOption[] }
+type NativeQuestion = {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: QuestionOption[]
+}
+
+// $.ui.ask 한 번에 여는 dialog. tabs 는 그 dialog 의 질문이고, 답은 question 하나로 합쳐 돌려준다.
+type DialogPage = { question: string; tabs: NativeQuestion[] }
 
 const markRecommended = (item: PendingQuestion, option: QuestionOption) =>
   item.recommended.includes(option.label)
@@ -665,31 +665,73 @@ const chunkOptions = (options: QuestionOption[]) => {
   return [...chunks, rest]
 }
 
-// dialog 한 번에 넣지 못하는 단일 선택을 나눈다. 서술형은 Input 이 없는 surface(mobile)에서만 여기로 오고,
-// 권장 답변과 Decide later 로 옵션 2개를 맞춘다.
-const pagesOf = (item: PendingQuestion): DialogPage[] => {
-  const options = item.options.map(option => markRecommended(item, option))
-  if (options.length == 1) {
-    return [{ question: item.question, options: [...options, DECIDE_LATER] }]
-  }
-  if (options.length <= MAX_DIALOG_OPTIONS) return [{ question: item.question, options }]
-
-  const chunks = chunkOptions(options)
-  return chunks.map((chunk, index) => ({
-    question: `${item.question} (${index + 1}/${chunks.length})`,
-    options: index == chunks.length - 1 ? chunk : [...chunk, MORE_OPTIONS],
-  }))
+// 탭마다 선택지가 2개 이상이 되도록 고르게 나눈다. MAX_OPTIONS 12 는 탭 3개에 들어간다.
+const splitEvenly = (options: QuestionOption[]) => {
+  const count = Math.ceil(options.length / MAX_DIALOG_OPTIONS)
+  const size = Math.ceil(options.length / count)
+  return Array.from({ length: count }, (_, index) => options.slice(index * size, (index + 1) * size))
 }
 
+const singleTab = (item: PendingQuestion, question: string, options: QuestionOption[]): NativeQuestion =>
+  ({ question, header: item.header, multiSelect: false, options })
+
+// 다중 선택은 dialog 의 질문 여러 개(탭)로 한 번에 묻는다. 탭마다 따로 답하므로 단일 선택에는 쓰지 않는다.
+const multiSelectPage = (item: PendingQuestion, options: QuestionOption[]): DialogPage => {
+  const chunks = splitEvenly(options)
+  const tabs = chunks.map((chunk, index) => {
+    const suffix = chunks.length == 1 ? '' : ` ${index + 1}`
+    return {
+      question: chunks.length == 1 ? item.question : `${item.question} (${index + 1}/${chunks.length})`,
+      header: `${item.header.slice(0, MAX_HEADER - suffix.length)}${suffix}`,
+      multiSelect: true,
+      options: chunk,
+    }
+  })
+  return { question: item.question, tabs }
+}
+
+// 서술형은 권장 답변과 Decide later 로 선택지 2개를 맞추고, 다른 답은 dialog 의 Type something 으로 받는다.
+// 단일 선택이 dialog 한 번에 들어가지 않으면 More options 로 다음 dialog 를 연다.
+const pagesOf = (item: PendingQuestion): DialogPage[] => {
+  const options = item.options.map(option => markRecommended(item, option))
+  if (item.isMultiSelect) return [multiSelectPage(item, options)]
+  if (options.length == 1) {
+    return [{ question: item.question, tabs: [singleTab(item, item.question, [...options, DECIDE_LATER])] }]
+  }
+  if (options.length <= MAX_DIALOG_OPTIONS) {
+    return [{ question: item.question, tabs: [singleTab(item, item.question, options)] }]
+  }
+
+  const chunks = chunkOptions(options)
+  return chunks.map((chunk, index) => {
+    const question = `${item.question} (${index + 1}/${chunks.length})`
+    const shown = index == chunks.length - 1 ? chunk : [...chunk, MORE_OPTIONS]
+    return { question, tabs: [singleTab(item, question, shown)] }
+  })
+}
+
+// $.ui.ask 는 라벨 2-4개와 질문 하나만 받는다. 앞의 라벨 4개까지로 부르고, tool.call 훅이 설명과 탭을 넣는다.
 const askPages = async ($: EngineInterface, item: PendingQuestion) => {
   for (const page of pagesOf(item)) {
+    const labels = page.tabs.flatMap(tab => tab.options).map(option => option.label)
     const answer = await $.ui.ask(page.question, {
-      options: page.options.map(option => option.label),
+      options: labels.slice(0, MAX_DIALOG_OPTIONS),
       header: item.header,
+      ...(item.isMultiSelect ? { multiSelect: true as const } : {}),
     })
     if (answer != MORE_OPTIONS.label) return answer
   }
   return ''
+}
+
+// 탭마다 온 답을 탭 순서대로 이어 $.ui.ask 가 묻는 질문 하나의 답으로 돌려준다. 답한 탭이 없으면 그대로 둔다.
+const joinTabAnswers = (page: DialogPage, done: ToolCallResult<'AskUserQuestion'>) => {
+  if (done.deny != undefined || done.isError == true) return done
+
+  const answers = done.result.answers as Record<string, string | undefined>
+  const picked = page.tabs.map(tab => answers[tab.question]).filter(answer => answer != undefined)
+  if (picked.length == 0) return done
+  return { ...done, result: { ...done.result, answers: { [page.question]: picked.join(', ') } } }
 }
 
 const openDialog = async ($: EngineInterface, item: PendingQuestion) => {
@@ -714,7 +756,8 @@ const answerItem = async ($: EngineInterface, id: string, answer: string) => {
   showOpenCount($, after)
   const isSaved = after.items.some(one => one.id == id && one.answer == answer)
   if (!isSaved) $.ui.toast('This question was already closed. The answer was not sent.')
-  await deliverAnswers($)
+  // 전달은 세션이 idle 이 될 때까지 기다리므로 ui.press 훅이 그동안 끝나지 않게 기다리지 않는다.
+  void deliverAnswers($)
 }
 
 const askQuestion = async ($: EngineInterface, item: PendingQuestion) => {
@@ -727,51 +770,6 @@ const askQuestion = async ($: EngineInterface, item: PendingQuestion) => {
   }
 
   await answerItem($, item.id, picked.replaceAll(RECOMMENDED_SUFFIX, ''))
-}
-
-const isTextQuestion = (item: PendingQuestion) => item.options.length == 1
-
-const draftOf = (item: PendingQuestion, drafts: Drafts): QuestionDraft =>
-  drafts[item.id] ?? {
-    picks: item.recommended,
-    text: isTextQuestion(item) ? item.recommended.join(', ') : '',
-  }
-
-const changeDraft = ($: EngineInterface, item: PendingQuestion, change: (draft: QuestionDraft) => QuestionDraft) =>
-  update($, draftsAtom, drafts => ({ ...drafts, [item.id]: change(draftOf(item, drafts)) }))
-
-const typeDraft = ($: EngineInterface, item: PendingQuestion, text: string) =>
-  changeDraft($, item, draft => ({ ...draft, text }))
-
-const togglePick = ($: EngineInterface, item: PendingQuestion, label: string) =>
-  changeDraft($, item, draft => ({
-    ...draft,
-    picks: draft.picks.includes(label)
-      ? draft.picks.filter(pick => pick != label)
-      : [...draft.picks, label],
-  }))
-
-const sendText = async ($: EngineInterface, item: PendingQuestion, value: string) => {
-  const answer = value.trim()
-  if (answer == '') {
-    $.ui.toast(NO_ANSWER_TOAST)
-    return
-  }
-
-  await answerItem($, item.id, answer)
-}
-
-const sendPicks = async ($: EngineInterface, item: PendingQuestion) => {
-  const draft = draftOf(item, await read($, draftsAtom))
-  const labels = item.options.map(option => option.label).filter(label => draft.picks.includes(label))
-  const typed = draft.text.trim()
-  const parts = typed == '' ? labels : [...labels, typed]
-  await answerItem($, item.id, parts.length == 0 ? NOTHING_PICKED : parts.join(', '))
-}
-
-const submitTypedPick = async ($: EngineInterface, item: PendingQuestion, value: string) => {
-  await typeDraft($, item, value)
-  await sendPicks($, item)
 }
 
 // 추출과 해소는 모델의 판단이라 틀릴 수 있다. 사람이 pane 에서 결과를 되돌리는 동작 두 가지다.
@@ -854,13 +852,6 @@ const restoreLog = async ($: EngineInterface) => {
   $.ui.log(`restored ${sessionId}: seq ${stored?.seq ?? 'none'}`, { to: 'debug' })
 }
 
-type NativeQuestion = {
-  question: string
-  header: string
-  multiSelect: boolean
-  options: QuestionOption[]
-}
-
 const nativeRecommended = (asked: NativeQuestion) => {
   const marked = asked.options.filter(option => option.label.includes('(Recommended)'))
   return (asked.multiSelect ? marked : marked.slice(0, 1)).map(option => option.label)
@@ -921,9 +912,26 @@ export const register: Register = on => {
     return done
   })
 
-  // 모델이 부른 AskUserQuestion 도 auto 모드에서는 dialog 를 열지 않고 권장 항목으로 답한다.
+  // Button 의 onPress 는 훅 밖에서 실행되어 거기서 연 dialog 에는 이 플러그인의 tool.call 훅이 실행되지 않는다
+  // (debug 로그의 `tool.call skipped: re-entry`). ui.press 훅에서 열면 이 훅만 건너뛴다. 훅이 기다리는
+  // $ 호출의 시간은 훅의 budget 에 들지 않는다.
+  on('ui.press', { plugin: 'pending-questions', component: 'Pane', requestId: PANE, element: /^q\d+$/ }, async ($, e) => {
+    const item = (await read($, logAtom)).items.find(one => one.id == e.element && isOpen(one))
+    if (item != undefined) await askQuestion($, item)
+
+    return { element: e.element }
+  })
+
+  // pane 에서 연 dialog 는 등록한 항목의 설명과 탭을 넣어 사람에게 묻는다. auto 모드여도 사람이 연 것이다.
+  // 모델이 부른 AskUserQuestion 은 auto 모드에서 dialog 를 열지 않고 권장 항목으로 답한다.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
-    if (!canAutoAnswer(await read($, logAtom))) return next(e)
+    const log = await read($, logAtom)
+    const [asked] = e.questions
+    const page = log.items.filter(isOpen).flatMap(pagesOf).find(one => one.question == asked?.question)
+    if (page != undefined && e.questions.length == 1) {
+      return joinTabAnswers(page, await next({ ...e, questions: page.tabs }))
+    }
+    if (!canAutoAnswer(log)) return next(e)
 
     const questions = e.questions as NativeQuestion[]
     if (!questions.every(hasNativeRecommendation)) return next(e)
@@ -958,91 +966,22 @@ export const register: Register = on => {
     }
   })
 
-  // $.ui.ask 는 선택지 라벨만 받으므로 등록한 항목의 설명을 dialog 를 그릴 때 다시 넣는다.
-  on('ui.render', { component: 'AskUserQuestion' }, async ($, e, next) => {
-    const log = await read($, logAtom)
-    const pages = log.items.filter(isOpen).flatMap(pagesOf)
-    const questions = (e.props.questions as { question: string }[]).map(asked => {
-      const page = pages.find(one => one.question == asked.question)
-      return page == undefined ? asked : { ...asked, options: page.options }
-    })
-
-    return next({ ...e, props: { ...e.props, questions } })
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const table = $.ui.resolve(e)
-    const { Box, Button, Text } = table
-    const Input = 'Input' in table ? table.Input : undefined
+    const { Box, Button, Text } = $.ui.resolve(e)
     const log = await read($, logAtom)
     const others = await read($, othersAtom)
-    const drafts = await read($, draftsAtom)
     const open = log.items.filter(isOpen)
     const history = log.items.filter(item => !isOpen(item)).slice(-HISTORY_ROWS)
     const otherMode: AnswerMode = log.mode == 'manual' ? 'auto' : 'manual'
 
-    // ui.press 는 10초 budget 안에 끝나야 하므로 dialog 의 답과 전달을 기다리지 않고 반환한다.
+    // 누르면 위의 ui.press 훅이 dialog 를 열고 next 를 부르지 않으므로 이 onPress 는 실행되지 않는다.
     const dialogButton = (item: PendingQuestion) => (
       <Button
         key={item.id}
         label={`${item.id}. ${item.question}`}
-        onPress={() => void askQuestion($, item)}
+        onPress={() => undefined}
       />
     )
-
-    const multiSelectRows = (item: PendingQuestion) => {
-      const draft = draftOf(item, drafts)
-      return (
-        <Box flexDirection="column">
-          <Text bold>{item.id}. {item.question}</Text>
-          {item.options.map(option => (
-            <Button
-              key={`${item.id}:${option.label}`}
-              plain
-              onPress={() => void togglePick($, item, option.label)}
-            >
-              [{draft.picks.includes(option.label) ? 'x' : ' '}] {markRecommended(item, option).label}{' '}
-              <Text dimColor>{option.description}</Text>
-            </Button>
-          ))}
-          {Input != undefined && (
-            <Input
-              key={`${item.id}:typed`}
-              placeholder="Type something"
-              value={draft.text}
-              submitLabel="send"
-              onInput={value => void typeDraft($, item, value)}
-              onSubmit={value => void submitTypedPick($, item, value)}
-            />
-          )}
-          <Button key={`${item.id}:send`} label="Send" onPress={() => void sendPicks($, item)} />
-        </Box>
-      )
-    }
-
-    const textRows = (item: PendingQuestion) => {
-      if (Input == undefined) return dialogButton(item)
-
-      return (
-        <Box flexDirection="column">
-          <Text bold>{item.id}. {item.question}</Text>
-          <Input
-            key={`${item.id}:typed`}
-            placeholder="Type something"
-            value={draftOf(item, drafts).text}
-            rows={3}
-            submitLabel="send"
-            onInput={value => void typeDraft($, item, value)}
-            onSubmit={value => void sendText($, item, value)}
-          />
-        </Box>
-      )
-    }
-
-    const answerRows = (item: PendingQuestion) => {
-      if (item.isMultiSelect) return multiSelectRows(item)
-      return isTextQuestion(item) ? textRows(item) : dialogButton(item)
-    }
 
     return (
       <Box flexDirection="column">
@@ -1064,11 +1003,9 @@ export const register: Register = on => {
         {open.length == 0 && <Text dimColor>No pending questions.</Text>}
         {open.map(item => (
           <Box flexDirection="column" marginBottom={1}>
-            {answerRows(item)}
+            {dialogButton(item)}
             {item.detail != '' && <Text dimColor>{item.detail}</Text>}
-            {!item.isMultiSelect && (
-              <Text dimColor>Recommended: {item.recommended.join(', ')}</Text>
-            )}
+            <Text dimColor>Recommended: {item.recommended.join(', ')}</Text>
             {log.mode == 'auto' && !item.isRecommendationStated && (
               <Text dimColor>{NOT_STATED_NOTE}</Text>
             )}

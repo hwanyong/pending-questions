@@ -295,7 +295,7 @@ KINDS_SCRIPT = """When the message contains "rollout", reply with:
 Three decisions are left for the rollout:
 
 1. Which region should go first: us-east-1, us-west-2, eu-west-1, eu-central-1, ap-northeast-2, or ap-southeast-1? I recommend eu-west-1.
-2. Which alerts should stay on during the rollout: latency, errors, or saturation? I recommend latency and errors.
+2. Which alerts should stay on during the rollout: latency, errors, saturation, traffic, disk, or memory? Pick any that apply. I recommend latency and errors.
 3. What should the on-call note say? I suggest "Billing 2.4 rollout in progress".
 """
 
@@ -304,34 +304,42 @@ def scene_kinds():
     take = Take('demo-question-kinds', 'pending-questions: three question kinds', KINDS_SCRIPT)
     take.start_claude()
     take.open_pane()
-    take.say('Three question kinds, each with its own input')
+    take.say('Three question kinds, each answered in a dialog')
     take.enter_prompt('Plan the rollout.')
     take.wait_for(r'q3\.')
     take.hold(1800)
-    take.say('Multiple choice: recommended rows start checked')
+    take.say('Multiple choice: the recommended options come first')
     take.chord('ctrl+x Tab', 'C-x', 'Tab')
-    take.focus(r'\[ \] saturation')
-    take.hold(900)
-    take.say('Enter toggles a row, Send answers with every checked row')
-    take.press('Enter', 'Enter', pause=0.6, duration=900)
-    take.still('multiple-choice-rows', (r'q\d\. Which alerts', r'\[ Send \]'))
-    take.focus(r'Send')
+    take.focus(r'q\d\. Which alerts')
+    take.press('Enter', 'Enter', pause=1.5, duration=1400)
+    take.say('Enter checks an option. Six options are split into two tabs')
+    take.press('Enter', 'Enter', pause=0.4, duration=500)
+    take.press('Down', '↓', pause=0.3, duration=300)
+    take.press('Enter', 'Enter', pause=0.4, duration=900)
+    take.still('multiple-choice-dialog', (r'Alerts 1', r'Chat about this'))
+    take.press('Right', '→', pause=0.6, duration=1200)
+    take.press('Right', '→', pause=0.6, duration=1600)
     take.press('Enter', 'Enter', pause=0.6, duration=700)
+    take.key_label = ''
     take.wait_for(r'\[manual\] q\d\. Which alerts')
     take.wait_for(r'Noted')
     take.hold(1600, (r'\[manual\] q\d\. Which alerts', None))
-    take.say('Free-form: edit the recommended draft, Enter sends it')
-    take.focus(r'q\d\. Which region')
-    take.press('Tab', 'Tab', pause=0.35, duration=260)
-    take.press('Tab', 'Tab', pause=0.35, duration=400)
+    take.say('Free-form: the recommended draft, or Type something')
+    take.chord('ctrl+x Tab', 'C-x', 'Tab')
+    take.focus(r'q\d\. What should')
+    take.press('Enter', 'Enter', pause=1.5, duration=1400)
+    take.press('Down', '↓', pause=0.3, duration=300)
+    take.press('Down', '↓', pause=0.3, duration=400)
     take.key_label = ''
-    take.type_text(' until 18:00')
+    take.type_text('Billing 2.4 rollout in progress until 18:00')
     take.hold(1200)
-    take.still('free-form-input')
+    take.still('free-form-dialog')
     take.press('Enter', 'Enter', pause=0.6, duration=700)
+    take.key_label = ''
     take.wait_for(r'\[manual\] q\d\. What should')
     take.wait_for(r'Noted')
     take.hold(1200)
+    take.chord('ctrl+x Tab', 'C-x', 'Tab')
     take.say('Single choice: five or more options are split into pages')
     take.focus(r'q\d\. Which region')
     take.press('Enter', 'Enter', pause=1.5, duration=1800)

@@ -31,14 +31,14 @@
 
 Claude Code asks most of its questions as plain text at the end of a response. The next tool output or the next prompt pushes that text up the screen, and nothing reminds you that a question is still open. pending-questions lists open questions in a pane until they are answered, resolved or dismissed, and counts them in the status line.
 
-<img src="docs/images/pane-registered.png" width="640" alt="Claude Code with a response that ends in three numbered questions. The pane on the right lists q1 and q3 as buttons, each with its context, Recommended line and a Not a question button. q2 is a multiple choice question with checkbox rows, unit and lint already checked. A toast reads 3 new questions registered, and the status line reads pending-questions: 3 pending (/questions).">
+<img src="docs/images/pane-registered.png" width="640" alt="Claude Code with a response that ends in three numbered questions. The pane on the right lists q1, q2 and q3 as buttons, each with its context, a Recommended line (staging; unit, lint; Billing 2.4) and a Not a question button. A toast reads 3 new questions registered, and the status line reads pending-questions: 3 pending (/questions).">
 
 ## Features
 
 | Feature | What it does | Demo |
 |---|---|---|
 | Automatic registration | A small model reads each response and registers the questions and decisions that need your answer | [Overview](#pending-questions-a-claude-code-plugin-that-keeps-unanswered-questions-in-a-pane) |
-| Three question kinds | Single choice opens a dialog. Multiple choice shows checkable rows in the pane with the recommended options already checked. Free-form questions show an input with a recommended draft | [Answering](#how-do-i-answer-a-question) |
+| Three question kinds | Every question opens a Claude Code dialog from the pane. Single choice with five or more options is split into pages, multiple choice into tabs of one dialog, and a free-form question offers a recommended draft or `Type something` | [Answering](#how-do-i-answer-a-question) |
 | Manual and auto modes | Auto mode answers only the questions whose recommendation it can verify in the response, and sends the answer as a plugin message, not as your words. Everything else stays open for you. History shows how each question was handled | [Auto mode](#how-does-auto-mode-decide) |
 | Automatic closing | A question closes as `[resolved]` when the conversation or a tool result settles it. The model must quote the evidence, and the plugin checks that quote against the conversation | [Closing](#how-do-questions-close-and-how-do-i-correct-a-mistake) |
 | Corrections | `Not a question` closes a wrong entry, `Reopen` restores a wrongly closed one, and `Rescan last response` reads the last response again with a stronger model | [Corrections](#how-do-questions-close-and-how-do-i-correct-a-mistake) |
@@ -75,26 +75,26 @@ Press `ctrl+x` then `Tab` to move keyboard focus to the pane, `Tab` to move betw
 | Question kind | How you answer |
 |---|---|
 | Single choice | Press the question to open a dialog. Five or more options are split into pages with `More options` |
-| Multiple choice | Toggle the rows, optionally type an addition, then press `Send` |
-| Free-form | Edit the recommended draft and press `Enter` |
+| Multiple choice | Press the question to open a dialog, check options with `Enter` and submit. Five or more options are split into tabs of the same dialog. The recommended options come first but start unchecked |
+| Free-form | Press the question to open a dialog. Choose the recommended draft, or type your own answer under `Type something` |
 
-<img src="docs/images/demo-question-kinds.png" width="860" alt="Claude's response asks three questions about a rollout. In the multiple choice question about alerts, latency and errors start checked as recommended. The user moves to the saturation row, presses Enter to check it and presses Send, and the pane history shows [manual] q2 with latency, errors, saturation. In the free-form question about the on-call note, the input holds the draft Billing 2.4 rollout in progress. The user appends until 18:00 and presses Enter. In the single choice question about six regions, Enter opens a dialog marked (1/2). The user selects More options, and the dialog marked (2/2) shows eu-central-1, ap-northeast-2 and ap-southeast-1.">
+<img src="docs/images/demo-question-kinds.png" width="860" alt="Claude's response asks three questions about a rollout. The user presses the multiple choice question about six alerts in the pane, and a dialog opens with two tabs, Alerts 1 and Alerts 2, of three options each. On Alerts 1 the user checks latency (Recommended) and errors (Recommended) with Enter, moves to Submit and presses Enter. The chat shows a prompt from the plugin with the answer latency, errors, and the pane history shows [manual] q2. The user presses the free-form question about the on-call note. Its dialog offers Billing 2.4 rollout in progress (Recommended) and Decide later, and the user types Billing 2.4 rollout in progress until 18:00 under Type something and presses Enter. The user presses the single choice question about six regions, and a dialog marked (1/2) opens. The user selects More options, the dialog marked (2/2) shows eu-central-1, ap-northeast-2 and ap-southeast-1, and the user chooses eu-central-1.">
 
 Single choice opens a dialog with the recommended option first:
 
-<img src="docs/images/single-choice-dialog.png" width="640" alt="A Claude Code dialog asks Which environment should I deploy to, staging or production? The options are 1. staging (Recommended), 2. production, 3. Type something and 4. Chat about this. The pane stays open on the right.">
+<img src="docs/images/single-choice-dialog.png" width="640" alt="A Claude Code dialog asks Which environment should I deploy to, staging or production? The options are 1. staging (Recommended) with the description Deploy to the staging environment for testing before release, 2. production with the description Deploy directly to the production environment, 3. Type something and 4. Chat about this. The pane stays open on the right.">
 
 With five or more options, `More options` moves to the next page:
 
-<img src="docs/images/single-choice-pages.png" width="640" alt="A Claude Code dialog asks Which region should go first? and is marked (2/2). The options are eu-central-1, ap-northeast-2, ap-southeast-1, Type something and Chat about this.">
+<img src="docs/images/single-choice-pages.png" width="640" alt="A Claude Code dialog asks Which region should go first? and is marked (2/2). The options are eu-central-1, ap-northeast-2 and ap-southeast-1, each with a description such as Roll out to eu-central-1 first, followed by Type something and Chat about this. The pane history shows [manual] q2 and [manual] q3 with their answers.">
 
-Multiple choice shows rows in the pane, with the recommended options already checked:
+Multiple choice with five or more options opens one dialog with a tab for each group of options. The answers of all tabs are sent as one answer:
 
-<img src="docs/images/multiple-choice-rows.png" width="640" alt="An orange outline in the pane marks the question Which alerts should stay on during the rollout? Its rows are [x] latency (Recommended), [x] errors (Recommended) and the focused row [x] saturation, followed by a Type something input and a Send button.">
+<img src="docs/images/multiple-choice-dialog.png" width="640" alt="A Claude Code dialog with the tabs Alerts 1, Alerts 2 and Submit asks Which alerts should stay on during the rollout: latency, errors, saturation, traffic, disk, or memory? (1/2). An orange outline marks the options [✔] latency (Recommended), [✔] errors (Recommended), [ ] saturation, each with a description, then [ ] Type something, Next and Chat about this.">
 
-Free-form shows an input that holds a recommended draft:
+Free-form offers the recommended draft and Decide later, and takes any other answer under `Type something`:
 
-<img src="docs/images/free-form-input.png" width="640" alt="The pane shows q3, What should the on-call note say?, with an input holding Billing 2.4 rollout in progress until 18:00 and the hint for sending it. Below it is the line Recommended: Billing 2.4 rollout in progress. The chat shows the earlier answer to q2 as a prompt from the plugin.">
+<img src="docs/images/free-form-dialog.png" width="640" alt="A Claude Code dialog asks What should the on-call note say? The options are 1. Billing 2.4 rollout in progress (Recommended) with the description Post this note to the on-call channel for the rollout, 2. Decide later with the description Keeps the question open and sends nothing, and 3. Type something, where the user has typed Billing 2.4 rollout in progress until 18:00. The chat shows the earlier answer latency, errors as a prompt from the plugin, and the pane history shows [manual] q2.">
 
 History marks each closed question:
 
@@ -186,7 +186,8 @@ Each session writes to two files in turn, `<sessionId>.0.json` and `<sessionId>.
 - Auto mode checks words and sentence positions, not meaning. No word list is complete. A sentence that passes the checks above but means something else is still sent, including text Claude relays as plain prose and a recommendation attributed to someone else ("the docs recommended a.txt"). Use auto mode only where a wrong answer is cheap to undo.
 - The extraction input includes the turn's tool output, because a tool result can settle a question. The input is marked as data with randomized tags, but a file or web page that Claude read could still mislead the extraction model into registering or closing a question wrongly. Auto mode does not send such a question unless both quotes pass the check above; check the pane for entries you do not recognize.
 - Recovery was tested with `kill -9`. A real power loss or reboot has not been tested. Whether data survives also depends on the drive honoring the flush.
-- Tested on macOS with Claude Code 2.1.312 in a terminal. Not tested: Linux, Windows, mobile (where free-form questions fall back to a dialog with `Decide later`), the desktop app and `claude --bg`.
+- The dialog cannot start with options checked, so the recommended options of a multiple choice question start unchecked. A recommended free-form draft cannot be edited in place: type the whole answer under `Type something`.
+- Tested on macOS with Claude Code 2.1.312 in a terminal. Not tested: Linux, Windows, mobile, the desktop app and `claude --bg`.
 - `hooks/flush.pl` needs `perl` on the `PATH`. Without it, every write shows a toast and the files are still written.
 
 ## FAQ
@@ -229,7 +230,7 @@ It was tested on macOS with Claude Code 2.1.312 in a terminal. Linux, Windows, m
 
 ## About the recordings
 
-The animated images are APNG files recorded from real Claude Code 2.1.312 sessions running this plugin at version 0.1.4 with the `haiku` model. The terminal was captured with `tmux capture-pane -e` and drawn to images by [`verification/demo/`](verification/demo/).
+The animated images are APNG files recorded from real Claude Code 2.1.312 sessions running this plugin with the `haiku` model: the overview and question kinds at version 0.1.6, the others at 0.1.4. The terminal was captured with `tmux capture-pane -e` and drawn to images by [`verification/demo/`](verification/demo/).
 
 - Claude's responses were fixed with a system prompt (`--append-system-prompt-file`) so that the recording repeats. Extraction, the pane, dialogs, automatic answers and `kill -9` recovery ran for real.
 - A take was recorded again when it stopped, including when the case-sensitive label check above left the first question open. The images show takes where it passed.
