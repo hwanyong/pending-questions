@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionMessage, ToolCallResult, ToolUseSummary } from 'claude-code'
+import type { EngineInterface, Register, StateWrite, SessionMessage, ToolCallResult, ToolUseSummary } from 'claude-code'
 
 import type {
   AnswerMode,
@@ -10,8 +10,11 @@ import type {
   QuestionOption,
   UnreadResponse,
 } from '../types'
+import { placementIn, readPlacement } from './pane-grid'
 
 const PANE = 'pending-questions'
+// pane-grid 의 layout 에서 이 mod 의 칸을 찾는 이름. plugin.json 의 name 이다.
+const PLUGIN = 'pending-questions'
 const PANE_TITLE = 'Pending questions'
 const COMMAND = 'questions'
 const EXTRACT_MODEL = 'haiku'
@@ -558,7 +561,21 @@ const extractQuestions = async ($: EngineInterface, head: UnreadResponse) => {
   return parseExtraction(reply.text)
 }
 
-const openPane = ($: EngineInterface) => $.ui.open({ id: PANE, title: PANE_TITLE })
+// pane-grid 의 배치에 이 mod 의 칸이 있으면 자기 pane 을 열지 않는다. 그 칸에 같은 그림이 있다(plugin-pane-grid 의 docs/grid-and-tabs.md §3.5).
+const openPane = async ($: EngineInterface) => {
+  if (await readPlacement($, PLUGIN)) return
+  await $.ui.open({ id: PANE, title: PANE_TITLE })
+}
+
+// pane-grid 가 layout 을 쓸 때마다 실행한다. 칸이 생겼으면 자기 pane 을 닫고, 칸이 없어진 그때만 다시 연다.
+// 칸이 없는 채로 배치만 바뀔 때는 열지 않는다. 사람이 닫아 둔 pane 을 다시 열지 않기 위해서다.
+const placeOwnPane = async ($: EngineInterface, layout: unknown, previous: unknown) => {
+  const isPlaced = placementIn(layout, PLUGIN) != undefined
+  const isOpen = (await $.ui.panes()).some(pane => pane.id == PANE)
+  if (isPlaced && isOpen) return $.ui.close({ id: PANE })
+  if (isPlaced || isOpen || placementIn(previous, PLUGIN) == undefined) return
+  await $.ui.open({ id: PANE, title: PANE_TITLE })
+}
 
 const isAutoPaused = (log: QuestionLog, added: number) =>
   log.mode == 'auto' && added > 0 && !canAutoAnswer(log) && log.items.some(isOpen)
@@ -867,6 +884,84 @@ const hasNativeRecommendation = (asked: NativeQuestion) => nativeRecommended(ask
 
 const historyFlag = (answeredBy: AnsweredBy) => `[${answeredBy}]`
 
+// 자기 pane 과 grid 칸이 함께 쓰는 그리기 함수. 너비를 쓰지 않으므로 칸 너비를 받지 않는다.
+const drawQuestions = async ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) => {
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const log = await read($, logAtom)
+  const others = await read($, othersAtom)
+  const open = log.items.filter(isOpen)
+  const history = log.items.filter(item => !isOpen(item)).slice(-HISTORY_ROWS)
+  const otherMode: AnswerMode = log.mode == 'manual' ? 'auto' : 'manual'
+
+  // 누르면 위의 ui.press 훅이 dialog 를 열고 next 를 부르지 않으므로 이 onPress 는 실행되지 않는다.
+  const dialogButton = (item: PendingQuestion) => (
+    <Button
+      key={item.id}
+      label={`${item.id}. ${item.question}`}
+      onPress={() => undefined}
+    />
+  )
+
+  return (
+    <Box flexDirection="column">
+      {/* grid 칸처럼 좁으면 Button 이 다음 줄로 넘어간다. wrap 이 없으면 Mode 글이 너비 0 으로 줄어 보이지 않는다. */}
+      <Box flexDirection="row" flexWrap="wrap" marginBottom={1}>
+        <Text bold>Mode: {log.mode} </Text>
+        <Button
+          key="mode"
+          label={`Switch to ${otherMode}`}
+          onPress={() => void setMode($, otherMode)}
+        />
+        <Text> </Text>
+        <Button
+          key="rescan"
+          label="Rescan last response"
+          dimColor
+          onPress={() => void rescanLastResponse($)}
+        />
+      </Box>
+      {open.length == 0 && <Text dimColor>No pending questions.</Text>}
+      {open.map(item => (
+        <Box flexDirection="column" marginBottom={1}>
+          {dialogButton(item)}
+          {item.detail != '' && <Text dimColor>{item.detail}</Text>}
+          <Text dimColor>Recommended: {item.recommended.join(', ')}</Text>
+          {log.mode == 'auto' && !item.isRecommendationStated && (
+            <Text dimColor>{NOT_STATED_NOTE}</Text>
+          )}
+          <Button
+            key={`${item.id}:dismiss`}
+            label={NOT_A_QUESTION}
+            dimColor
+            onPress={() => void dismissItem($, item.id)}
+          />
+        </Box>
+      ))}
+      {history.map(item => (
+        <Box flexDirection="column">
+          <Text dimColor>
+            {historyFlag(item.answeredBy)} {item.id}. {historyQuestion(item)} → {item.answer}
+            {item.isDelivered ? '' : ' (sending)'}
+          </Text>
+          {isReopenable(item) && (
+            <Button
+              key={`${item.id}:reopen`}
+              label="Reopen"
+              dimColor
+              onPress={() => void reopenItem($, item.id)}
+            />
+          )}
+        </Box>
+      ))}
+      {others.map(other => (
+        <Text dimColor>
+          {other.openCount} pending in another session: claude --resume {other.sessionId}
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -892,6 +987,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: COMMAND }, async $ => {
+    const placement = await readPlacement($, PLUGIN)
+    if (placement) return { text: `Pending questions are drawn in a cell of the pane-grid layout ${placement.tab}, so their own pane was not opened.` }
     await openPane($)
 
     return { text: 'Pending questions pane opened.' }
@@ -921,7 +1018,8 @@ export const register: Register = on => {
   // Button 의 onPress 는 훅 밖에서 실행되어 거기서 연 dialog 에는 이 플러그인의 tool.call 훅이 실행되지 않는다
   // (debug 로그의 `tool.call skipped: re-entry`). ui.press 훅에서 열면 이 훅만 건너뛴다. 훅이 기다리는
   // $ 호출의 시간은 훅의 budget 에 들지 않는다.
-  on('ui.press', { plugin: 'pending-questions', component: 'Pane', requestId: PANE, element: /^q\d+$/ }, async ($, e) => {
+  // requestId 의 /^grid-/ 는 pane-grid 의 grid pane 이다. 그 칸에 그린 질문 Button 도 이 hook 이 받는다.
+  on('ui.press', { plugin: 'pending-questions', component: 'Pane', requestId: [PANE, /^grid-/], element: /^q\d+$/ }, async ($, e) => {
     const item = (await read($, logAtom)).items.find(one => one.id == e.element && isOpen(one))
     if (item != undefined) await askQuestion($, item)
 
@@ -972,79 +1070,30 @@ export const register: Register = on => {
     }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const log = await read($, logAtom)
-    const others = await read($, othersAtom)
-    const open = log.items.filter(isOpen)
-    const history = log.items.filter(item => !isOpen(item)).slice(-HISTORY_ROWS)
-    const otherMode: AnswerMode = log.mode == 'manual' ? 'auto' : 'manual'
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => drawQuestions($, e))
 
-    // 누르면 위의 ui.press 훅이 dialog 를 열고 next 를 부르지 않으므로 이 onPress 는 실행되지 않는다.
-    const dialogButton = (item: PendingQuestion) => (
-      <Button
-        key={item.id}
-        label={`${item.id}. ${item.question}`}
-        onPress={() => undefined}
-      />
-    )
-
+  // pane-grid 의 grid pane 에 자기 칸이 있으면 `cell:<이름>` Box 를 덧붙인다(규약 §3.3).
+  on('ui.render', { component: 'Pane', requestId: /^grid-/ }, async ($, e, next) => {
+    const placement = await readPlacement($, PLUGIN)
+    if (!placement || placement.requestId != e.requestId) return next(e)
+    const below = await next(e)
+    const { Box } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" marginBottom={1}>
-          <Text bold>Mode: {log.mode} </Text>
-          <Button
-            key="mode"
-            label={`Switch to ${otherMode}`}
-            onPress={() => void setMode($, otherMode)}
-          />
-          <Text> </Text>
-          <Button
-            key="rescan"
-            label="Rescan last response"
-            dimColor
-            onPress={() => void rescanLastResponse($)}
-          />
+        {below}
+        <Box key={`cell:${PLUGIN}`} flexDirection="column">
+          {await drawQuestions($, e)}
         </Box>
-        {open.length == 0 && <Text dimColor>No pending questions.</Text>}
-        {open.map(item => (
-          <Box flexDirection="column" marginBottom={1}>
-            {dialogButton(item)}
-            {item.detail != '' && <Text dimColor>{item.detail}</Text>}
-            <Text dimColor>Recommended: {item.recommended.join(', ')}</Text>
-            {log.mode == 'auto' && !item.isRecommendationStated && (
-              <Text dimColor>{NOT_STATED_NOTE}</Text>
-            )}
-            <Button
-              key={`${item.id}:dismiss`}
-              label={NOT_A_QUESTION}
-              dimColor
-              onPress={() => void dismissItem($, item.id)}
-            />
-          </Box>
-        ))}
-        {history.map(item => (
-          <Box flexDirection="column">
-            <Text dimColor>
-              {historyFlag(item.answeredBy)} {item.id}. {historyQuestion(item)} → {item.answer}
-              {item.isDelivered ? '' : ' (sending)'}
-            </Text>
-            {isReopenable(item) && (
-              <Button
-                key={`${item.id}:reopen`}
-                label="Reopen"
-                dimColor
-                onPress={() => void reopenItem($, item.id)}
-              />
-            )}
-          </Box>
-        ))}
-        {others.map(other => (
-          <Text dimColor>
-            {other.openCount} pending in another session: claude --resume {other.sessionId}
-          </Text>
-        ))}
       </Box>
     )
+  })
+
+  // matcher 의 참조는 hooks/pane-grid.ts 의 GRID_LAYOUT 과 같다. 엔진은 $.state.get 의 참조 상수를 export 하지 못하게 해서 여기 다시 적는다.
+  // pane-grid 의 값은 이 mod 의 계약(types/index.d.ts)에 없으므로(결정 9) matcher 를 never 로 넘기고, 엔진이 계약 없는 값의 쓰기에 붙이는 StateWrite 로 읽는다.
+  on('state.set', { plugin: 'pane-grid' as never, key: 'layout' as never }, async ($, e, next) => {
+    const write = e as StateWrite
+    const result = await next(e)
+    await placeOwnPane($, write.value, write.previous)
+    return result
   })
 }
