@@ -10,7 +10,7 @@ import type {
   QuestionOption,
   UnreadResponse,
 } from '../types'
-import { placementIn, readPlacement } from './pane-grid'
+import { fillSlot, offerChoice, placementIn, readPlacement } from './pane-grid'
 
 const PANE = 'pending-questions'
 // pane-grid 의 layout 에서 이 mod 의 칸을 찾는 이름. plugin.json 의 name 이다.
@@ -1072,20 +1072,20 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => drawQuestions($, e))
 
-  // pane-grid 의 grid pane 에 자기 칸이 있으면 `cell:<이름>` Box 를 덧붙인다(규약 §3.3).
+  // pane-grid 의 grid pane: 빈 칸의 선택지에 이 mod 의 Button 을 더하고, 자기 칸이 이 pane 에 있으면 그 칸을 그린다(규약 §3.3 · §3.5).
+  // pane-grid 보다 먼저 로드되면 fillSlot 이 pane-grid 가 그린 slot 을 채우고, 뒤에 로드되면 `cell:<이름>` Box 를 next(e) 뒤에 덧붙인다.
   on('ui.render', { component: 'Pane', requestId: /^grid-/ }, async ($, e, next) => {
     const placement = await readPlacement($, PLUGIN)
-    if (!placement || placement.requestId != e.requestId) return next(e)
     const below = await next(e)
-    const { Box } = $.ui.resolve(e)
-    return (
-      <Box flexDirection="column">
-        {below}
-        <Box key={`cell:${PLUGIN}`} flexDirection="column">
-          {await drawQuestions($, e)}
-        </Box>
+    const { Box, Button } = $.ui.resolve(e)
+    const offered = offerChoice(below, PLUGIN, placement, choice => <Button key={choice.key} plain label={choice.label} hotkey={choice.hotkey} onPress={() => {}} />)
+    if (!placement || placement.requestId != e.requestId) return offered
+    const cell = (
+      <Box key={`cell:${PLUGIN}`} flexDirection="column">
+        {await drawQuestions($, e)}
       </Box>
     )
+    return fillSlot(offered, PLUGIN, cell) ?? <Box flexDirection="column">{offered}{cell}</Box>
   })
 
   // matcher 의 참조는 hooks/pane-grid.ts 의 GRID_LAYOUT 과 같다. 엔진은 $.state.get 의 참조 상수를 export 하지 못하게 해서 여기 다시 적는다.

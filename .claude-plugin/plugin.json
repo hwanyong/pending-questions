@@ -1,6 +1,6 @@
 {
   "name": "pending-questions",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Registers questions waiting for your answer in a pane, answers them in the pane or automatically, and recovers them after a crash",
   "author": { "name": "hwanyong" },
   "homepage": "https://github.com/hwanyong/pending-questions#readme",
